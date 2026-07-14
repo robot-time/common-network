@@ -1,10 +1,10 @@
-# Install the Common Network node tool (Windows).
+# Install the Common Network CLI tools (Windows).
 #
 #   irm https://raw.githubusercontent.com/robot-time/common-network/main/install.ps1 | iex
 #
-# Installs cloudflared (if missing), fetches join.py, and puts a
-# `common-join` command on your PATH. Ollama is checked but not
-# auto-installed since it has its own official Windows installer.
+# Always installs `common-chat` (talk to the network — needs nothing but
+# Python). Also installs `common-join` (contribute a node) if Ollama is
+# present, installing cloudflared automatically if needed.
 
 $ErrorActionPreference = "Stop"
 
@@ -13,7 +13,7 @@ $InstallDir = "$env:USERPROFILE\.common-network"
 $BinDir = "$InstallDir\bin"
 $Raw = "https://raw.githubusercontent.com/$Repo/main"
 
-Write-Host "Installing Common Network node tools..."
+Write-Host "Installing Common Network CLI tools..."
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 
 # --- python ---
@@ -24,34 +24,43 @@ if (-not $python) {
     exit 1
 }
 
-# --- cloudflared ---
-$cloudflared = Get-Command cloudflared -ErrorAction SilentlyContinue
-if (-not $cloudflared -and -not (Test-Path "$BinDir\cloudflared.exe")) {
-    Write-Host "Installing cloudflared..."
-    $cfUrl = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
-    Invoke-WebRequest -Uri $cfUrl -OutFile "$BinDir\cloudflared.exe"
-}
+# --- common-chat (always) ---
+Write-Host "Downloading the chat client..."
+Invoke-WebRequest -Uri "$Raw/chat/chat.py" -OutFile "$InstallDir\chat.py"
 
-# --- ollama ---
+$chatWrapper = @"
+@echo off
+python "$InstallDir\chat.py" %*
+"@
+Set-Content -Path "$BinDir\common-chat.cmd" -Value $chatWrapper
+
+# --- common-join (only if Ollama is present) ---
+$joinInstalled = $false
 $ollama = Get-Command ollama -ErrorAction SilentlyContinue
-if (-not $ollama) {
-    Write-Host ""
-    Write-Host "Ollama isn't installed yet. Download it from https://ollama.com/download,"
-    Write-Host "install and open it once (so it's running), then re-run this installer."
-    exit 1
-}
+if ($ollama) {
+    $cloudflared = Get-Command cloudflared -ErrorAction SilentlyContinue
+    if (-not $cloudflared -and -not (Test-Path "$BinDir\cloudflared.exe")) {
+        Write-Host "Installing cloudflared..."
+        $cfUrl = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+        Invoke-WebRequest -Uri $cfUrl -OutFile "$BinDir\cloudflared.exe"
+    }
 
-# --- join.py ---
-Write-Host "Downloading the join script..."
-Invoke-WebRequest -Uri "$Raw/join/join.py" -OutFile "$InstallDir\join.py"
+    Write-Host "Downloading the join script..."
+    Invoke-WebRequest -Uri "$Raw/join/join.py" -OutFile "$InstallDir\join.py"
 
-# --- wrapper command ---
-$wrapper = @"
+    $joinWrapper = @"
 @echo off
 set PATH=$BinDir;%PATH%
 python "$InstallDir\join.py" %*
 "@
-Set-Content -Path "$BinDir\common-join.cmd" -Value $wrapper
+    Set-Content -Path "$BinDir\common-join.cmd" -Value $joinWrapper
+    $joinInstalled = $true
+} else {
+    Write-Host ""
+    Write-Host "(Ollama not found -- skipping common-join. Install it from"
+    Write-Host " https://ollama.com/download and re-run this installer if you"
+    Write-Host " want to contribute a node, not just chat.)"
+}
 
 # --- PATH setup ---
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -61,7 +70,10 @@ if ($userPath -notlike "*$BinDir*") {
 }
 
 Write-Host ""
-Write-Host "Done! Open a new terminal, then run:"
+Write-Host "Done! Open a new terminal, then try:"
 Write-Host ""
-Write-Host "    common-join"
+Write-Host "    common-chat `"hello!`""
+if ($joinInstalled) {
+    Write-Host "    common-join          # contribute a node"
+}
 Write-Host ""
