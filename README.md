@@ -95,11 +95,16 @@ or install Python packages beyond the standard library. See
 [`join/README.md`](join/README.md). Short version:
 
 ```bash
-python3 join/join.py --gateway https://<the-shared-gateway-url> --secret <THE_SHARED_SECRET>
+python3 join/join.py --gateway https://gateway-production-b820.up.railway.app --secret <ASK_FOR_THE_SHARED_SECRET>
 ```
 
 This opens a free Cloudflare tunnel to your local Ollama, registers it with
-the shared gateway, and keeps it online until you press `Ctrl+C`.
+the shared gateway, and keeps it online until you press `Ctrl+C`. The
+shared secret is deliberately not committed here — ask whoever runs the
+network for it.
+
+The live gateway for this network is:
+`https://gateway-production-b820.up.railway.app`
 
 ## Deploying (Railway)
 
