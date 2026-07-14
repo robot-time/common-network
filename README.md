@@ -88,6 +88,19 @@ curl -X POST http://localhost:8000/nodes \
 `X-Common-Secret` is a shared secret (`REGISTRY_SECRET` in `.env`) — this is
 explicitly **not** production-grade auth, just enough friction for v0.1.
 
+## Contributing a node (for friends)
+
+Want to run your own machine as a node — no need to clone this whole repo
+or install Python packages beyond the standard library. See
+[`join/README.md`](join/README.md). Short version:
+
+```bash
+python3 join/join.py --gateway https://<the-shared-gateway-url> --secret <THE_SHARED_SECRET>
+```
+
+This opens a free Cloudflare tunnel to your local Ollama, registers it with
+the shared gateway, and keeps it online until you press `Ctrl+C`.
+
 ## Deploying (Railway)
 
 1. Create a Railway project with a Postgres plugin, and enable `pgvector`
