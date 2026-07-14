@@ -47,3 +47,11 @@ Press `Ctrl+C` to leave the network — it deregisters your node cleanly.
 - If your laptop goes to sleep or loses internet, the gateway's health check
   will just mark your node unhealthy and stop routing to it until you're
   back.
+- **The free Cloudflare quick tunnel has a hard ~100 second response
+  ceiling** — if your model hasn't replied by then, the request fails with
+  a Cloudflare 524 and the gateway falls back to another node. Stick to
+  small, fast, non-reasoning models (the default `llama3.2:3b` is fine).
+  "Thinking"/extended-reasoning models (e.g. some Qwen3 variants) can burn
+  well past 100 seconds on modest hardware before producing any visible
+  output — avoid those unless you've confirmed they respond quickly on
+  your machine.
