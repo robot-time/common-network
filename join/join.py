@@ -199,8 +199,13 @@ def ensure_model(model: str) -> None:
 
 
 def start_tunnel() -> tuple[subprocess.Popen, str]:
+    # Cloudflare's quick tunnel forwards the public tunnel hostname as the
+    # Host header by default. Some Ollama versions reject any request whose
+    # Host isn't localhost/127.0.0.1 (anti-DNS-rebinding protection) and
+    # respond 403 -- force the header cloudflared sends to the origin so
+    # that check always passes regardless of the Ollama version.
     proc = subprocess.Popen(
-        ["cloudflared", "tunnel", "--url", OLLAMA_URL],
+        ["cloudflared", "tunnel", "--url", OLLAMA_URL, "--http-host-header", "localhost:11434"],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
     )
 
