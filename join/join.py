@@ -66,8 +66,41 @@ REPO = "robot-time/common-network"
 UPDATE_URL = f"https://raw.githubusercontent.com/{REPO}/main/join/join.py"
 
 
+def _enable_windows_ansi() -> None:
+    if platform.system() != "Windows":
+        return
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+    except Exception:
+        pass
+
+
+_ANSI_CODES = {
+    "reset": "0", "bold": "1", "dim": "2",
+    "red": "31", "green": "32", "yellow": "33",
+    "blue": "34", "magenta": "35", "cyan": "36",
+}
+
+
+def _color_enabled() -> bool:
+    return sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+
+
+def style(text: str, *codes: str) -> str:
+    if not _color_enabled():
+        return text
+    prefix = "".join(f"\033[{_ANSI_CODES[c]}m" for c in codes)
+    return f"{prefix}{text}\033[{_ANSI_CODES['reset']}m"
+
+
+def dim(text: str) -> str:
+    return style(text, "dim")
+
+
 def die(msg: str, code: int = 1) -> None:
-    print(f"error: {msg}", file=sys.stderr)
+    print(style(f"error: {msg}", "red"), file=sys.stderr)
     sys.exit(code)
 
 
@@ -111,7 +144,7 @@ def apply_update_and_restart(remote: bytes) -> None:
         with open(local_path, "wb") as f:
             f.write(remote)
     except OSError as e:
-        print(f"warning: couldn't self-update ({e}), continuing with current version", file=sys.stderr)
+        print(style(f"warning: couldn't self-update ({e}), continuing with current version", "yellow"), file=sys.stderr)
         return
     os.execv(sys.executable, [sys.executable, local_path] + sys.argv[1:])
 
@@ -136,7 +169,7 @@ def ensure_ollama_running() -> None:
     except (urllib.error.URLError, socket.timeout):
         pass
 
-    print("Ollama doesn't seem to be running — trying `ollama serve`...")
+    print(style("Ollama doesn't seem to be running — trying `ollama serve`...", "yellow"))
     subprocess.Popen(
         ["ollama", "serve"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -157,7 +190,7 @@ def ensure_model(model: str) -> None:
     names = {m["name"] for m in tags.get("models", [])}
     if model in names:
         return
-    print(f"Model '{model}' not found locally — pulling it now (this may take a while)...")
+    print(style(f"Model '{model}' not found locally — pulling it now (this may take a while)...", "cyan"))
     result = subprocess.run(["ollama", "pull", model])
     if result.returncode != 0:
         die(f"failed to pull model '{model}'")
@@ -244,9 +277,9 @@ def install_macos_service(argv: list[str]) -> None:
     uid = os.getuid()
     subprocess.run(["launchctl", "bootout", f"gui/{uid}/{LAUNCHD_LABEL}"], capture_output=True)
     subprocess.run(["launchctl", "bootstrap", f"gui/{uid}", str(plist_path)], check=True)
-    print("Installed as a background service (LaunchAgent) — it will start at login and restart if it crashes.")
-    print(f"Logs: {log_path}")
-    print(f"To stop: python3 {os.path.abspath(__file__)} --remove-permanent --no-update")
+    print(style("Installed as a background service (LaunchAgent) — it will start at login and restart if it crashes.", "green", "bold"))
+    print(dim(f"Logs: {log_path}"))
+    print(dim(f"To stop: python3 {os.path.abspath(__file__)} --remove-permanent --no-update"))
 
 
 def remove_macos_service() -> None:
@@ -255,7 +288,7 @@ def remove_macos_service() -> None:
     plist_path = _macos_plist_path()
     if plist_path.exists():
         plist_path.unlink()
-    print("Removed the background service.")
+    print(style("Removed the background service.", "green"))
 
 
 def _systemd_unit_path() -> Path:
@@ -283,10 +316,10 @@ WantedBy=default.target
 """)
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
     subprocess.run(["systemctl", "--user", "enable", "--now", SYSTEMD_UNIT], check=True)
-    print("Installed as a background service (systemd --user) — it will start at login and restart if it crashes.")
-    print(f"Logs: journalctl --user -u {SYSTEMD_UNIT} -f")
-    print("If this is a server, also run `loginctl enable-linger $USER` so it keeps running after you log out.")
-    print(f"To stop: python3 {os.path.abspath(__file__)} --remove-permanent --no-update")
+    print(style("Installed as a background service (systemd --user) — it will start at login and restart if it crashes.", "green", "bold"))
+    print(dim(f"Logs: journalctl --user -u {SYSTEMD_UNIT} -f"))
+    print(dim("If this is a server, also run `loginctl enable-linger $USER` so it keeps running after you log out."))
+    print(dim(f"To stop: python3 {os.path.abspath(__file__)} --remove-permanent --no-update"))
 
 
 def remove_linux_service() -> None:
@@ -295,7 +328,7 @@ def remove_linux_service() -> None:
     if unit_path.exists():
         unit_path.unlink()
     subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True)
-    print("Removed the background service.")
+    print(style("Removed the background service.", "green"))
 
 
 def install_windows_service(argv: list[str]) -> None:
@@ -305,14 +338,14 @@ def install_windows_service(argv: list[str]) -> None:
         "/tn", SCHTASKS_NAME, "/tr", cmd_str,
     ], check=True)
     subprocess.run(["schtasks", "/run", "/tn", SCHTASKS_NAME], check=True)
-    print("Installed as a scheduled task — it will start at login. (Windows Task Scheduler doesn't auto-restart on crash like launchd/systemd do.)")
-    print(f"To stop: python3 {os.path.abspath(__file__)} --remove-permanent --no-update")
+    print(style("Installed as a scheduled task — it will start at login. (Windows Task Scheduler doesn't auto-restart on crash like launchd/systemd do.)", "green", "bold"))
+    print(dim(f"To stop: python3 {os.path.abspath(__file__)} --remove-permanent --no-update"))
 
 
 def remove_windows_service() -> None:
     subprocess.run(["schtasks", "/end", "/tn", SCHTASKS_NAME], capture_output=True)
     subprocess.run(["schtasks", "/delete", "/f", "/tn", SCHTASKS_NAME], capture_output=True)
-    print("Removed the scheduled task.")
+    print(style("Removed the scheduled task.", "green"))
 
 
 def install_permanent(args: argparse.Namespace) -> None:
@@ -342,7 +375,8 @@ def remove_permanent() -> None:
 
 def main() -> None:
     sys.stdout.reconfigure(line_buffering=True)
-    print(BANNER)
+    _enable_windows_ansi()
+    print(style(BANNER, "yellow", "bold"))
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--gateway", default=os.environ.get("COMMON_GATEWAY_URL", DEFAULT_GATEWAY), help="Gateway base URL (default: the shared Common Network gateway)")
     parser.add_argument("--secret", default=os.environ.get("COMMON_REGISTRY_SECRET"), help="Shared registry secret (will prompt if not given)")
@@ -360,7 +394,7 @@ def main() -> None:
     if not args.no_update:
         remote = fetch_update()
         if remote:
-            print("Updating to the latest version...")
+            print(style("Updating to the latest version...", "yellow"))
             apply_update_and_restart(remote)
 
     if args.remove_permanent:
@@ -383,9 +417,9 @@ def main() -> None:
     ensure_ollama_running()
     ensure_model(args.model)
 
-    print("Opening a Cloudflare quick tunnel to your local Ollama...")
+    print(style("Opening a Cloudflare quick tunnel to your local Ollama...", "cyan"))
     tunnel_proc, tunnel_url = start_tunnel()
-    print(f"Tunnel live at {tunnel_url}")
+    print(style(f"Tunnel live at {tunnel_url}", "green"))
 
     capability_text = args.capability or (
         f"{args.model} running locally via Ollama, contributed by {args.operator}. Free, community-hosted."
@@ -401,7 +435,7 @@ def main() -> None:
         "cost_per_1k": args.cost,
     }
 
-    print(f"Registering '{args.name}' with {gateway}...")
+    print(style(f"Registering '{args.name}' with {gateway}...", "cyan"))
     try:
         node = http_json("POST", f"{gateway}/nodes", body=payload, headers={"X-Common-Secret": args.secret})
     except urllib.error.HTTPError as e:
@@ -409,8 +443,8 @@ def main() -> None:
         die(f"registration failed: {e.code} {e.read().decode()}")
 
     node_id = node["id"]
-    print(f"You're live! Node id: {node_id}")
-    print("Keep this window open to stay in the network. Press Ctrl+C to leave.")
+    print(style(f"● You're live! Node id: {node_id}", "green", "bold"))
+    print(dim("Keep this window open to stay in the network. Press Ctrl+C to leave."))
 
     def deregister_and_stop_tunnel():
         try:
@@ -421,7 +455,7 @@ def main() -> None:
         tunnel_proc.terminate()
 
     def cleanup(signum=None, frame=None):
-        print("\nLeaving the network...")
+        print(style("\nLeaving the network...", "yellow"))
         deregister_and_stop_tunnel()
         sys.exit(0)
 
@@ -431,14 +465,14 @@ def main() -> None:
     last_update_check = time.monotonic()
     while True:
         if tunnel_proc.poll() is not None:
-            print("Tunnel dropped unexpectedly.")
+            print(style("Tunnel dropped unexpectedly.", "red"))
             cleanup()
 
         if not args.no_update and time.monotonic() - last_update_check > UPDATE_CHECK_INTERVAL_SECONDS:
             last_update_check = time.monotonic()
             remote = fetch_update()
             if remote:
-                print("\nA new version is available — restarting to update...")
+                print(style("\nA new version is available — restarting to update...", "yellow"))
                 deregister_and_stop_tunnel()
                 apply_update_and_restart(remote)
 

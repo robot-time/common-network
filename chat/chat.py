@@ -15,6 +15,7 @@ in place first (pass --no-update to skip).
 import argparse
 import json
 import os
+import platform
 import socket
 import sys
 import urllib.error
@@ -33,6 +34,39 @@ BANNER = r"""
 ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓██▓▒░
  ░▒▓██████▓▒░ ░▒▓██████▓▒░░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░░▒▓██████▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓██▓▒░
 """
+
+
+def _enable_windows_ansi() -> None:
+    if platform.system() != "Windows":
+        return
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+    except Exception:
+        pass
+
+
+_ANSI_CODES = {
+    "reset": "0", "bold": "1", "dim": "2",
+    "red": "31", "green": "32", "yellow": "33",
+    "blue": "34", "magenta": "35", "cyan": "36",
+}
+
+
+def _color_enabled() -> bool:
+    return sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+
+
+def style(text: str, *codes: str) -> str:
+    if not _color_enabled():
+        return text
+    prefix = "".join(f"\033[{_ANSI_CODES[c]}m" for c in codes)
+    return f"{prefix}{text}\033[{_ANSI_CODES['reset']}m"
+
+
+def dim(text: str) -> str:
+    return style(text, "dim")
 
 
 def self_update() -> None:
@@ -55,21 +89,15 @@ def self_update() -> None:
     if remote == local:
         return
 
-    print("Updating to the latest version...")
+    print(style("Updating to the latest version...", "yellow"))
     try:
         with open(local_path, "wb") as f:
             f.write(remote)
     except OSError as e:
-        print(f"warning: couldn't self-update ({e}), continuing with current version", file=sys.stderr)
+        print(style(f"warning: couldn't self-update ({e}), continuing with current version", "yellow"), file=sys.stderr)
         return
 
     os.execv(sys.executable, [sys.executable, local_path] + sys.argv[1:])
-
-
-def dim(text: str) -> str:
-    if not sys.stdout.isatty() or os.environ.get("NO_COLOR"):
-        return text
-    return f"\033[2m{text}\033[0m"
 
 
 def stream_chat(gateway: str, messages: list[dict], region: str | None) -> tuple[str, str | None, str | None]:
@@ -114,11 +142,12 @@ def stream_chat(gateway: str, messages: list[dict], region: str | None) -> tuple
 
 
 def print_footer(node: str | None, score: str | None) -> None:
+    dot = style("●", "green")
     if node:
         label = f"via {node}" + (f" (score {float(score):.3f})" if score else "")
-        print(dim(label))
+        print(f"{dot} {dim(label)}")
     else:
-        print(dim("via unknown node"))
+        print(f"{dot} {dim('via unknown node')}")
 
 
 def one_shot(gateway: str, question: str, region: str | None) -> None:
@@ -126,19 +155,19 @@ def one_shot(gateway: str, question: str, region: str | None) -> None:
     try:
         _, node, score = stream_chat(gateway, messages, region)
     except RuntimeError as e:
-        print(f"error: {e}", file=sys.stderr)
+        print(style(f"error: {e}", "red"), file=sys.stderr)
         sys.exit(1)
     print_footer(node, score)
 
 
 def interactive(gateway: str, region: str | None) -> None:
-    print(BANNER)
+    print(style(BANNER, "yellow", "bold"))
     print(dim(f"Common Network chat — talking to {gateway}"))
     print(dim("Ctrl+C or Ctrl+D to quit.\n"))
     messages: list[dict] = []
     while True:
         try:
-            question = input("you: ").strip()
+            question = input(style("you: ", "cyan", "bold")).strip()
         except (KeyboardInterrupt, EOFError):
             print()
             return
@@ -149,7 +178,7 @@ def interactive(gateway: str, region: str | None) -> None:
         try:
             answer, node, score = stream_chat(gateway, messages, region)
         except RuntimeError as e:
-            print(f"error: {e}\n", file=sys.stderr)
+            print(style(f"error: {e}\n", "red"), file=sys.stderr)
             messages.pop()
             continue
         messages.append({"role": "assistant", "content": answer})
@@ -159,6 +188,7 @@ def interactive(gateway: str, region: str | None) -> None:
 
 def main() -> None:
     sys.stdout.reconfigure(line_buffering=True)
+    _enable_windows_ansi()
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("question", nargs="*", help="Ask a one-shot question (omit for interactive chat)")
     parser.add_argument("--gateway", default=os.environ.get("COMMON_GATEWAY_URL", DEFAULT_GATEWAY), help="Gateway base URL (default: the shared Common Network gateway)")
