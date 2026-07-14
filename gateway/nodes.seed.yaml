@@ -1,0 +1,59 @@
+# Demo nodes for Common Network v0.1.
+# Edit endpoint_url / model_name / api_key_ref to point at real, reachable
+# nodes before demoing. Ollama nodes need `ollama serve` running locally.
+# OpenRouter-wrapped nodes need OPENROUTER_API_KEY set in the gateway's env.
+# Keep local Ollama models at 7B or smaller — this is developed on a 16GB laptop.
+
+nodes:
+  - name: ollama-qwen-coder-local
+    operator: common-network-demo
+    endpoint_url: http://localhost:11434/v1
+    model_name: qwen2.5-coder:7b
+    capability_text: >
+      Qwen2.5 Coder 7B running locally via Ollama. Strong at code generation,
+      structured reasoning, and math. Free, self-hosted, low cost.
+    region: local
+    cost_per_1k: 0
+
+  - name: ollama-qwen3.5-local
+    operator: common-network-demo
+    endpoint_url: http://localhost:11434/v1
+    model_name: qwen3.5:4b
+    capability_text: >
+      Qwen3.5 4B running locally via Ollama. Small, fast, general-purpose
+      model good at conversation, writing, and everyday knowledge questions.
+    region: local
+    cost_per_1k: 0
+
+  - name: openrouter-mistral
+    operator: common-network-demo
+    endpoint_url: https://openrouter.ai/api/v1
+    model_name: mistralai/mistral-7b-instruct
+    api_key_ref: OPENROUTER_API_KEY
+    capability_text: >
+      Mistral 7B Instruct via OpenRouter. Fast, low-cost, good general
+      instruction following and summarisation.
+    region: global
+    cost_per_1k: 0.06
+
+  - name: openrouter-deepseek
+    operator: common-network-demo
+    endpoint_url: https://openrouter.ai/api/v1
+    model_name: deepseek/deepseek-chat
+    api_key_ref: OPENROUTER_API_KEY
+    capability_text: >
+      DeepSeek Chat via OpenRouter. Strong at math, logic, and multi-step
+      reasoning tasks. Moderate cost.
+    region: global
+    cost_per_1k: 0.14
+
+  - name: openrouter-gemma
+    operator: common-network-demo
+    endpoint_url: https://openrouter.ai/api/v1
+    model_name: google/gemma-2-9b-it
+    api_key_ref: OPENROUTER_API_KEY
+    capability_text: >
+      Gemma 2 9B via OpenRouter. Good at language, writing, and social/
+      emotional nuance in conversation. Low cost.
+    region: global
+    cost_per_1k: 0.04
