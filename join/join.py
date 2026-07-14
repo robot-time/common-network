@@ -11,12 +11,19 @@ Requires: Python 3.8+, Ollama (https://ollama.com/download), cloudflared
 
 Usage:
     python3 join.py --secret SHARED_SECRET
+    python3 join.py --secret SHARED_SECRET --permanent   # run as a background service
+    python3 join.py --remove-permanent                   # undo the above
 
 Joins the default shared Common Network gateway unless --gateway overrides
 it. If --secret is omitted you'll be prompted for it. It checks GitHub for
 a newer version of itself on startup, and again every 30 minutes while
 running — if one is found it deregisters, stops the tunnel, updates, and
-restarts cleanly (pass --no-update to disable both checks). Everything
+restarts cleanly (pass --no-update to disable both checks).
+
+--permanent installs this as a real background service (LaunchAgent on
+macOS, systemd --user on Linux, a Scheduled Task on Windows) that starts
+at login and restarts automatically if it crashes — for servers or
+computers you don't want to babysit with an open terminal. Everything
 else has a sensible default — see --help.
 """
 import argparse
@@ -24,7 +31,9 @@ import getpass
 import json
 import os
 import platform
+import plistlib
 import re
+import shlex
 import shutil
 import signal
 import socket
@@ -34,6 +43,17 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
+
+BANNER = r"""
+░▒▓██████▓▒░ ░▒▓██████▓▒░░▒▓██████████████▓▒░░▒▓██████████████▓▒░ ░▒▓██████▓▒░░▒▓███████▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓██▓▒░
+ ░▒▓██████▓▒░ ░▒▓██████▓▒░░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░░▒▓██████▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓██▓▒░
+"""
 
 OLLAMA_URL = "http://localhost:11434"
 TUNNEL_URL_PATTERN = re.compile(r"https://[a-zA-Z0-9.-]+\.trycloudflare\.com")
@@ -172,8 +192,157 @@ def start_tunnel() -> tuple[subprocess.Popen, str]:
     die("timed out waiting for cloudflared to open a tunnel")
 
 
+LAUNCHD_LABEL = "network.common.join"
+SYSTEMD_UNIT = "common-join.service"
+SCHTASKS_NAME = "CommonNetworkJoin"
+
+
+def _service_argv(args: argparse.Namespace) -> list[str]:
+    argv = [
+        sys.executable, os.path.abspath(__file__),
+        "--gateway", args.gateway,
+        "--secret", args.secret,
+        "--model", args.model,
+        "--name", args.name,
+        "--operator", args.operator,
+        "--cost", str(args.cost),
+    ]
+    if args.region:
+        argv += ["--region", args.region]
+    if args.capability:
+        argv += ["--capability", args.capability]
+    if args.no_update:
+        argv += ["--no-update"]
+    return argv
+
+
+def _macos_plist_path() -> Path:
+    d = Path.home() / "Library" / "LaunchAgents"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"{LAUNCHD_LABEL}.plist"
+
+
+def install_macos_service(argv: list[str]) -> None:
+    plist_path = _macos_plist_path()
+    log_path = Path.home() / ".common-network" / "join.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # launchd's default PATH doesn't include /usr/local/bin or /opt/homebrew/bin,
+    # so ollama/cloudflared (installed there) won't resolve unless we carry over
+    # the PATH from the shell that ran --permanent.
+    with open(plist_path, "wb") as f:
+        plistlib.dump({
+            "Label": LAUNCHD_LABEL,
+            "ProgramArguments": argv,
+            "EnvironmentVariables": {"PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")},
+            "RunAtLoad": True,
+            "KeepAlive": True,
+            "StandardOutPath": str(log_path),
+            "StandardErrorPath": str(log_path),
+        }, f)
+
+    uid = os.getuid()
+    subprocess.run(["launchctl", "bootout", f"gui/{uid}/{LAUNCHD_LABEL}"], capture_output=True)
+    subprocess.run(["launchctl", "bootstrap", f"gui/{uid}", str(plist_path)], check=True)
+    print("Installed as a background service (LaunchAgent) — it will start at login and restart if it crashes.")
+    print(f"Logs: {log_path}")
+    print(f"To stop: python3 {os.path.abspath(__file__)} --remove-permanent --no-update")
+
+
+def remove_macos_service() -> None:
+    uid = os.getuid()
+    subprocess.run(["launchctl", "bootout", f"gui/{uid}/{LAUNCHD_LABEL}"], capture_output=True)
+    plist_path = _macos_plist_path()
+    if plist_path.exists():
+        plist_path.unlink()
+    print("Removed the background service.")
+
+
+def _systemd_unit_path() -> Path:
+    d = Path.home() / ".config" / "systemd" / "user"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / SYSTEMD_UNIT
+
+
+def install_linux_service(argv: list[str]) -> None:
+    unit_path = _systemd_unit_path()
+    exec_start = " ".join(shlex.quote(a) for a in argv)
+    path_env = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
+    unit_path.write_text(f"""[Unit]
+Description=Common Network node
+After=network-online.target
+
+[Service]
+Environment=PATH={path_env}
+ExecStart={exec_start}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+""")
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+    subprocess.run(["systemctl", "--user", "enable", "--now", SYSTEMD_UNIT], check=True)
+    print("Installed as a background service (systemd --user) — it will start at login and restart if it crashes.")
+    print(f"Logs: journalctl --user -u {SYSTEMD_UNIT} -f")
+    print("If this is a server, also run `loginctl enable-linger $USER` so it keeps running after you log out.")
+    print(f"To stop: python3 {os.path.abspath(__file__)} --remove-permanent --no-update")
+
+
+def remove_linux_service() -> None:
+    subprocess.run(["systemctl", "--user", "disable", "--now", SYSTEMD_UNIT], capture_output=True)
+    unit_path = _systemd_unit_path()
+    if unit_path.exists():
+        unit_path.unlink()
+    subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True)
+    print("Removed the background service.")
+
+
+def install_windows_service(argv: list[str]) -> None:
+    cmd_str = " ".join(f'"{a}"' if " " in a else a for a in argv)
+    subprocess.run([
+        "schtasks", "/create", "/f", "/sc", "onlogon", "/rl", "highest",
+        "/tn", SCHTASKS_NAME, "/tr", cmd_str,
+    ], check=True)
+    subprocess.run(["schtasks", "/run", "/tn", SCHTASKS_NAME], check=True)
+    print("Installed as a scheduled task — it will start at login. (Windows Task Scheduler doesn't auto-restart on crash like launchd/systemd do.)")
+    print(f"To stop: python3 {os.path.abspath(__file__)} --remove-permanent --no-update")
+
+
+def remove_windows_service() -> None:
+    subprocess.run(["schtasks", "/end", "/tn", SCHTASKS_NAME], capture_output=True)
+    subprocess.run(["schtasks", "/delete", "/f", "/tn", SCHTASKS_NAME], capture_output=True)
+    print("Removed the scheduled task.")
+
+
+def install_permanent(args: argparse.Namespace) -> None:
+    argv = _service_argv(args)
+    system = platform.system()
+    if system == "Darwin":
+        install_macos_service(argv)
+    elif system == "Linux":
+        install_linux_service(argv)
+    elif system == "Windows":
+        install_windows_service(argv)
+    else:
+        die(f"--permanent isn't supported on {system}")
+
+
+def remove_permanent() -> None:
+    system = platform.system()
+    if system == "Darwin":
+        remove_macos_service()
+    elif system == "Linux":
+        remove_linux_service()
+    elif system == "Windows":
+        remove_windows_service()
+    else:
+        die(f"--permanent isn't supported on {system}")
+
+
 def main() -> None:
     sys.stdout.reconfigure(line_buffering=True)
+    print(BANNER)
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--gateway", default=os.environ.get("COMMON_GATEWAY_URL", DEFAULT_GATEWAY), help="Gateway base URL (default: the shared Common Network gateway)")
     parser.add_argument("--secret", default=os.environ.get("COMMON_REGISTRY_SECRET"), help="Shared registry secret (will prompt if not given)")
@@ -184,6 +353,8 @@ def main() -> None:
     parser.add_argument("--cost", type=float, default=0, help="Declared cost per 1k tokens (default: 0, it's free)")
     parser.add_argument("--capability", default=None, help="Override the auto-generated capability description")
     parser.add_argument("--no-update", action="store_true", default=bool(os.environ.get("COMMON_NO_UPDATE")), help="Skip the self-update check (useful when hacking on this script locally)")
+    parser.add_argument("--permanent", action="store_true", help="Install as a background service that starts at login/boot and restarts if it crashes, then exit")
+    parser.add_argument("--remove-permanent", action="store_true", help="Remove the background service installed by --permanent, then exit")
     args = parser.parse_args()
 
     if not args.no_update:
@@ -192,11 +363,19 @@ def main() -> None:
             print("Updating to the latest version...")
             apply_update_and_restart(remote)
 
+    if args.remove_permanent:
+        remove_permanent()
+        return
+
     if not args.secret:
         if sys.stdin.isatty():
             args.secret = getpass.getpass("Enter the network secret you were given: ").strip()
         if not args.secret:
             die("--secret is required (or set COMMON_REGISTRY_SECRET)")
+
+    if args.permanent:
+        install_permanent(args)
+        return
 
     gateway = args.gateway.rstrip("/")
 

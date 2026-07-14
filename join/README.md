@@ -53,6 +53,30 @@ common-join --model qwen2.5:7b
 Run `common-join --help` for all options (custom gateway, node name,
 region, etc).
 
+## Running it permanently (servers, always-on machines)
+
+Don't want to keep a terminal window open? Install it as a real background
+service — starts at login/boot and restarts automatically if it crashes:
+
+```bash
+common-join --permanent
+```
+
+This installs a LaunchAgent (macOS), a `systemd --user` service (Linux), or
+a Scheduled Task (Windows) that runs `common-join` for you. It still
+checks for updates and auto-updates itself every 30 minutes, same as
+running it in a terminal. Logs go to `~/.common-network/join.log` (macOS)
+or `journalctl --user -u common-join.service` (Linux).
+
+On a headless Linux server, also run `loginctl enable-linger $USER` so it
+keeps running after you log out of your SSH session.
+
+To stop and remove it:
+
+```bash
+common-join --remove-permanent
+```
+
 ## Manual install (advanced / no installer)
 
 If you'd rather not run the installer, you only need Python 3.8+,

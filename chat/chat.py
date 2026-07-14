@@ -24,6 +24,16 @@ DEFAULT_GATEWAY = "https://gateway-production-b820.up.railway.app"
 REPO = "robot-time/common-network"
 UPDATE_URL = f"https://raw.githubusercontent.com/{REPO}/main/chat/chat.py"
 
+BANNER = r"""
+░▒▓██████▓▒░ ░▒▓██████▓▒░░▒▓██████████████▓▒░░▒▓██████████████▓▒░ ░▒▓██████▓▒░░▒▓███████▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓██▓▒░
+ ░▒▓██████▓▒░ ░▒▓██████▓▒░░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░░▒▓██████▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓██▓▒░
+"""
+
 
 def self_update() -> None:
     try:
@@ -122,23 +132,24 @@ def one_shot(gateway: str, question: str, region: str | None) -> None:
 
 
 def interactive(gateway: str, region: str | None) -> None:
+    print(BANNER)
     print(dim(f"Common Network chat — talking to {gateway}"))
     print(dim("Ctrl+C or Ctrl+D to quit.\n"))
     messages: list[dict] = []
     while True:
         try:
-            question = input("you> ").strip()
+            question = input("you: ").strip()
         except (KeyboardInterrupt, EOFError):
             print()
             return
         if not question:
             continue
         messages.append({"role": "user", "content": question})
-        print("assistant> ", end="", flush=True)
+        print(flush=True)
         try:
             answer, node, score = stream_chat(gateway, messages, region)
         except RuntimeError as e:
-            print(f"\nerror: {e}", file=sys.stderr)
+            print(f"error: {e}\n", file=sys.stderr)
             messages.pop()
             continue
         messages.append({"role": "assistant", "content": answer})
