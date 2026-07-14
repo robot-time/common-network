@@ -102,11 +102,13 @@ def self_update() -> None:
     os.execv(sys.executable, [sys.executable, local_path] + sys.argv[1:])
 
 
-def stream_chat(gateway: str, messages: list[dict], region: str | None) -> tuple[str, str | None, str | None]:
+def stream_chat(gateway: str, messages: list[dict], region: str | None, target_node: str | None) -> tuple[str, str | None, str | None]:
     body = {"model": "auto", "messages": messages, "stream": True}
     headers = {"Content-Type": "application/json"}
     if region:
         headers["X-Common-Region"] = region
+    if target_node:
+        headers["X-Common-Node"] = target_node
 
     req = urllib.request.Request(
         f"{gateway}/v1/chat/completions", data=json.dumps(body).encode(), headers=headers, method="POST",
@@ -146,25 +148,32 @@ def stream_chat(gateway: str, messages: list[dict], region: str | None) -> tuple
 def print_footer(node: str | None, score: str | None) -> None:
     dot = style("●", "green")
     if node:
-        label = f"via {node}" + (f" (score {float(score):.3f})" if score else "")
-        print(f"{dot} {dim(label)}")
+        suffix = ""
+        if score:
+            try:
+                suffix = f" (score {float(score):.3f})"
+            except ValueError:
+                suffix = f" ({score})"
+        print(f"{dot} {dim(f'via {node}{suffix}')}")
     else:
         print(f"{dot} {dim('via unknown node')}")
 
 
-def one_shot(gateway: str, question: str, region: str | None) -> None:
+def one_shot(gateway: str, question: str, region: str | None, target_node: str | None) -> None:
     messages = [{"role": "user", "content": question}]
     try:
-        _, node, score = stream_chat(gateway, messages, region)
+        _, node, score = stream_chat(gateway, messages, region, target_node)
     except RuntimeError as e:
         print(style(f"error: {e}", "red"), file=sys.stderr)
         sys.exit(1)
     print_footer(node, score)
 
 
-def interactive(gateway: str, region: str | None) -> None:
+def interactive(gateway: str, region: str | None, target_node: str | None) -> None:
     print(style(BANNER, "white", "bold"))
     print(dim(f"Common Network chat — talking to {gateway}"))
+    if target_node:
+        print(dim(f"Talking to a specific node: {target_node}"))
     print(dim("Ctrl+C or Ctrl+D to quit.\n"))
     messages: list[dict] = []
     while True:
@@ -178,7 +187,7 @@ def interactive(gateway: str, region: str | None) -> None:
         messages.append({"role": "user", "content": question})
         print(flush=True)
         try:
-            answer, node, score = stream_chat(gateway, messages, region)
+            answer, node, score = stream_chat(gateway, messages, region, target_node)
         except RuntimeError as e:
             print(style(f"error: {e}\n", "red"), file=sys.stderr)
             messages.pop()
@@ -188,6 +197,23 @@ def interactive(gateway: str, region: str | None) -> None:
         print()
 
 
+def list_nodes(gateway: str) -> None:
+    req = urllib.request.Request(f"{gateway}/nodes")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            nodes = json.loads(resp.read().decode())
+    except (urllib.error.URLError, socket.timeout) as e:
+        print(style(f"error: couldn't reach gateway: {e}", "red"), file=sys.stderr)
+        sys.exit(1)
+
+    if not nodes:
+        print(dim("No nodes registered."))
+        return
+    for n in nodes:
+        badge = style("●", "green") if n["healthy"] else style("●", "red")
+        print(f"{badge} {n['name']}  {dim(n['model_name'])}")
+
+
 def main() -> None:
     sys.stdout.reconfigure(line_buffering=True)
     _enable_windows_ansi()
@@ -195,6 +221,8 @@ def main() -> None:
     parser.add_argument("question", nargs="*", help="Ask a one-shot question (omit for interactive chat)")
     parser.add_argument("--gateway", default=os.environ.get("COMMON_GATEWAY_URL", DEFAULT_GATEWAY), help="Gateway base URL (default: the shared Common Network gateway)")
     parser.add_argument("--region", default=None, help="Optional region hint for routing, e.g. au-adelaide")
+    parser.add_argument("--node", default=None, help="Target a specific node by name instead of letting the router pick (see --list-nodes)")
+    parser.add_argument("--list-nodes", action="store_true", help="List registered nodes and their health, then exit")
     parser.add_argument("--no-update", action="store_true", default=bool(os.environ.get("COMMON_NO_UPDATE")), help="Skip the self-update check")
     args = parser.parse_args()
 
@@ -203,10 +231,14 @@ def main() -> None:
 
     gateway = args.gateway.rstrip("/")
 
+    if args.list_nodes:
+        list_nodes(gateway)
+        return
+
     if args.question:
-        one_shot(gateway, " ".join(args.question), args.region)
+        one_shot(gateway, " ".join(args.question), args.region, args.node)
     else:
-        interactive(gateway, args.region)
+        interactive(gateway, args.region, args.node)
 
 
 if __name__ == "__main__":

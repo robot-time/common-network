@@ -98,11 +98,20 @@ async def chat_completions(request: Request):
     routing_text = _extract_routing_text(body)
     request_embed = embedder.embed(routing_text)
     region_hint = request.headers.get("X-Common-Region")
+    forced_node_name = request.headers.get("X-Common-Node")
 
-    scored = score_nodes(nodes, request_embed, region_hint)
-    primary, backup = scored[0], (scored[1] if len(scored) > 1 else None)
+    if forced_node_name:
+        matches = [n for n in nodes if n["name"] == forced_node_name]
+        if not matches:
+            raise HTTPException(status_code=404, detail=f"node '{forced_node_name}' not found or not currently healthy")
+        # No fallback candidate -- if you asked for this node specifically,
+        # a failure should surface as a failure, not silently reroute.
+        candidates = [ScoredNode(node=matches[0], score=1.0, sim=0.0, cost_term=0.0, lat_term=0.0, region_term=0.0)]
+    else:
+        scored = score_nodes(nodes, request_embed, region_hint)
+        primary, backup = scored[0], (scored[1] if len(scored) > 1 else None)
+        candidates = [primary] + ([backup] if backup else [])
 
-    candidates = [primary] + ([backup] if backup else [])
     last_error: Exception | None = None
 
     for attempt, candidate in enumerate(candidates):
@@ -114,15 +123,12 @@ async def chat_completions(request: Request):
                 raise httpx.HTTPStatusError("upstream error", request=resp.request, response=resp)
 
             await _update_latency(candidate.node["id"], latency_ms)
-            await _record_decision(
-                request_embed, candidate,
-                backup if candidate is primary else primary,
-                latency_ms, True,
-            )
+            runner_up = next((c for i, c in enumerate(candidates) if i != attempt), None)
+            await _record_decision(request_embed, candidate, runner_up, latency_ms, True)
 
             headers = {
                 "X-Common-Node": candidate.node["name"],
-                "X-Common-Score": f"{candidate.score:.4f}",
+                "X-Common-Score": "forced" if forced_node_name else f"{candidate.score:.4f}",
             }
 
             if stream:
