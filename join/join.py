@@ -198,6 +198,17 @@ def ensure_model(model: str) -> None:
         die(f"failed to pull model '{model}'")
 
 
+TUNNEL_HEALTH_CHECK_INTERVAL_SECONDS = 120  # quick tunnels can silently reconnect with a new hostname without the process dying
+
+
+def tunnel_is_healthy(tunnel_url: str) -> bool:
+    try:
+        http_json("GET", f"{tunnel_url}/v1/models", timeout=8)
+        return True
+    except (urllib.error.URLError, socket.timeout):
+        return False
+
+
 def start_tunnel() -> tuple[subprocess.Popen, str]:
     # Cloudflare's quick tunnel forwards the public tunnel hostname as the
     # Host header by default. Some Ollama versions reject any request whose
@@ -471,10 +482,26 @@ def main() -> None:
     signal.signal(signal.SIGTERM, cleanup)
 
     last_update_check = time.monotonic()
+    last_tunnel_check = time.monotonic()
     while True:
         if tunnel_proc.poll() is not None:
             print(style("Tunnel dropped unexpectedly.", "red"))
             cleanup()
+
+        if time.monotonic() - last_tunnel_check > TUNNEL_HEALTH_CHECK_INTERVAL_SECONDS:
+            last_tunnel_check = time.monotonic()
+            if not tunnel_is_healthy(tunnel_url):
+                print(style("Tunnel URL is no longer reachable (quick tunnels can silently rotate hostnames) — restarting it...", "yellow"))
+                tunnel_proc.terminate()
+                tunnel_proc, tunnel_url = start_tunnel()
+                print(style(f"Tunnel live at {tunnel_url}", "green"))
+                payload["endpoint_url"] = f"{tunnel_url}/v1"
+                try:
+                    node = http_json("POST", f"{gateway}/nodes", body=payload, headers={"X-Common-Secret": args.secret})
+                    node_id = node["id"]
+                    print(style(f"Re-registered '{args.name}' with the new tunnel URL.", "green"))
+                except urllib.error.HTTPError as e:
+                    print(style(f"warning: failed to re-register after tunnel restart: {e.code} {e.read().decode()}", "red"), file=sys.stderr)
 
         if not args.no_update and time.monotonic() - last_update_check > UPDATE_CHECK_INTERVAL_SECONDS:
             last_update_check = time.monotonic()
