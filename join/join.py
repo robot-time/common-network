@@ -13,10 +13,11 @@ Usage:
     python3 join.py --secret SHARED_SECRET
 
 Joins the default shared Common Network gateway unless --gateway overrides
-it. If --secret is omitted you'll be prompted for it. On every run it
-checks GitHub for a newer version of itself and updates in place first
-(pass --no-update to skip). Everything else has a sensible default — see
---help.
+it. If --secret is omitted you'll be prompted for it. It checks GitHub for
+a newer version of itself on startup, and again every 30 minutes while
+running — if one is found it deregisters, stops the tunnel, updates, and
+restarts cleanly (pass --no-update to disable both checks). Everything
+else has a sensible default — see --help.
 """
 import argparse
 import getpass
@@ -59,35 +60,39 @@ def http_json(method: str, url: str, body: dict | None = None, headers: dict | N
         return json.loads(resp.read().decode())
 
 
-def self_update() -> None:
-    """Replace this script with the latest version from GitHub and restart, if different."""
+UPDATE_CHECK_INTERVAL_SECONDS = 1800  # re-check every 30 min while a node sits running
+
+
+def fetch_update() -> bytes | None:
+    """Return the latest join.py source from GitHub if it differs from the local copy, else None."""
     try:
         with urllib.request.urlopen(UPDATE_URL, timeout=5) as resp:
             remote = resp.read()
     except (urllib.error.URLError, socket.timeout):
-        return  # offline or GitHub unreachable — carry on with the current version
+        return None  # offline or GitHub unreachable — carry on with the current version
 
     if not remote.strip():
-        return
+        return None
 
     local_path = os.path.abspath(__file__)
     try:
         with open(local_path, "rb") as f:
             local = f.read()
     except OSError:
-        return
+        return None
 
-    if remote == local:
-        return
+    return remote if remote != local else None
 
-    print("Updating to the latest version...")
+
+def apply_update_and_restart(remote: bytes) -> None:
+    """Overwrite this script with `remote` and re-exec. Never returns on success."""
+    local_path = os.path.abspath(__file__)
     try:
         with open(local_path, "wb") as f:
             f.write(remote)
     except OSError as e:
         print(f"warning: couldn't self-update ({e}), continuing with current version", file=sys.stderr)
         return
-
     os.execv(sys.executable, [sys.executable, local_path] + sys.argv[1:])
 
 
@@ -182,7 +187,10 @@ def main() -> None:
     args = parser.parse_args()
 
     if not args.no_update:
-        self_update()
+        remote = fetch_update()
+        if remote:
+            print("Updating to the latest version...")
+            apply_update_and_restart(remote)
 
     if not args.secret:
         if sys.stdin.isatty():
@@ -225,23 +233,36 @@ def main() -> None:
     print(f"You're live! Node id: {node_id}")
     print("Keep this window open to stay in the network. Press Ctrl+C to leave.")
 
-    def cleanup(signum=None, frame=None):
-        print("\nLeaving the network...")
+    def deregister_and_stop_tunnel():
         try:
             req = urllib.request.Request(f"{gateway}/nodes/{node_id}", method="DELETE", headers={"X-Common-Secret": args.secret})
             urllib.request.urlopen(req, timeout=5)
         except urllib.error.URLError:
             pass
         tunnel_proc.terminate()
+
+    def cleanup(signum=None, frame=None):
+        print("\nLeaving the network...")
+        deregister_and_stop_tunnel()
         sys.exit(0)
 
     signal.signal(signal.SIGINT, cleanup)
     signal.signal(signal.SIGTERM, cleanup)
 
+    last_update_check = time.monotonic()
     while True:
         if tunnel_proc.poll() is not None:
             print("Tunnel dropped unexpectedly.")
             cleanup()
+
+        if not args.no_update and time.monotonic() - last_update_check > UPDATE_CHECK_INTERVAL_SECONDS:
+            last_update_check = time.monotonic()
+            remote = fetch_update()
+            if remote:
+                print("\nA new version is available — restarting to update...")
+                deregister_and_stop_tunnel()
+                apply_update_and_restart(remote)
+
         time.sleep(2)
 
 
