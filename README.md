@@ -68,6 +68,10 @@ curl http://localhost:8000/nodes
 curl http://localhost:8000/decisions/recent
 ```
 
+Or just open **`/dashboard`** in a browser for a live view of node health,
+routing distribution, and recent decisions (auto-refreshes every 5s):
+`https://gateway-production-b820.up.railway.app/dashboard`
+
 ## Registering a node
 
 ```bash

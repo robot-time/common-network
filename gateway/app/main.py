@@ -1,7 +1,9 @@
 import asyncio
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
 
 from app import db, embedder
 from app.config import settings
@@ -39,3 +41,11 @@ app.include_router(decisions_router)
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+DASHBOARD_PATH = Path(__file__).parent / "static" / "dashboard.html"
+
+
+@app.get("/dashboard")
+async def dashboard():
+    return FileResponse(DASHBOARD_PATH)

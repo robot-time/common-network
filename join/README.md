@@ -31,12 +31,16 @@ common-join
 It'll ask for the network secret (get that from whoever's running the
 network — it's not public). Then it will:
 
-1. Make sure Ollama is running and pull a default small model if needed.
-2. Open a free Cloudflare tunnel to your local Ollama.
-3. Register your node with the shared gateway.
-4. Keep running so your node stays online.
+1. Check GitHub for a newer version of itself and update in place if found
+   (pass `--no-update` to skip).
+2. Make sure Ollama is running and pull a default small model if needed.
+3. Open a free Cloudflare tunnel to your local Ollama.
+4. Register your node with the shared gateway.
+5. Keep running so your node stays online.
 
 Press `Ctrl+C` to leave the network — it deregisters your node cleanly.
+Every future run auto-updates itself, so friends never need to reinstall to
+get fixes or improvements.
 
 By default it serves `llama3.2:3b` (small, fast, works on most laptops).
 Pass `--model` to use a different one you have pulled in Ollama — keep it

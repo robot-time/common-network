@@ -13,8 +13,10 @@ Usage:
     python3 join.py --secret SHARED_SECRET
 
 Joins the default shared Common Network gateway unless --gateway overrides
-it. If --secret is omitted you'll be prompted for it. Everything else has
-a sensible default — see --help.
+it. If --secret is omitted you'll be prompted for it. On every run it
+checks GitHub for a newer version of itself and updates in place first
+(pass --no-update to skip). Everything else has a sensible default — see
+--help.
 """
 import argparse
 import getpass
@@ -39,6 +41,9 @@ TUNNEL_URL_PATTERN = re.compile(r"https://[a-zA-Z0-9.-]+\.trycloudflare\.com")
 # join (or run) a different network entirely.
 DEFAULT_GATEWAY = "https://gateway-production-b820.up.railway.app"
 
+REPO = "robot-time/common-network"
+UPDATE_URL = f"https://raw.githubusercontent.com/{REPO}/main/join/join.py"
+
 
 def die(msg: str, code: int = 1) -> None:
     print(f"error: {msg}", file=sys.stderr)
@@ -52,6 +57,38 @@ def http_json(method: str, url: str, body: dict | None = None, headers: dict | N
         req.add_header("Content-Type", "application/json")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode())
+
+
+def self_update() -> None:
+    """Replace this script with the latest version from GitHub and restart, if different."""
+    try:
+        with urllib.request.urlopen(UPDATE_URL, timeout=5) as resp:
+            remote = resp.read()
+    except (urllib.error.URLError, socket.timeout):
+        return  # offline or GitHub unreachable — carry on with the current version
+
+    if not remote.strip():
+        return
+
+    local_path = os.path.abspath(__file__)
+    try:
+        with open(local_path, "rb") as f:
+            local = f.read()
+    except OSError:
+        return
+
+    if remote == local:
+        return
+
+    print("Updating to the latest version...")
+    try:
+        with open(local_path, "wb") as f:
+            f.write(remote)
+    except OSError as e:
+        print(f"warning: couldn't self-update ({e}), continuing with current version", file=sys.stderr)
+        return
+
+    os.execv(sys.executable, [sys.executable, local_path] + sys.argv[1:])
 
 
 def check_binaries() -> None:
@@ -141,7 +178,11 @@ def main() -> None:
     parser.add_argument("--region", default=None, help="Optional region hint, e.g. au-adelaide")
     parser.add_argument("--cost", type=float, default=0, help="Declared cost per 1k tokens (default: 0, it's free)")
     parser.add_argument("--capability", default=None, help="Override the auto-generated capability description")
+    parser.add_argument("--no-update", action="store_true", default=bool(os.environ.get("COMMON_NO_UPDATE")), help="Skip the self-update check (useful when hacking on this script locally)")
     args = parser.parse_args()
+
+    if not args.no_update:
+        self_update()
 
     if not args.secret:
         if sys.stdin.isatty():

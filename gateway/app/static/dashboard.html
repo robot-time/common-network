@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Common Network — Dashboard</title>
+<style>
+  .viz-root {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --page:           #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --muted:          #898781;
+    --gridline:       #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --good:           #0ca30c;
+    --critical:       #d03b3b;
+    --s1: #2a78d6; --s2: #1baf7a; --s3: #eda100; --s4: #008300;
+    --s5: #4a3aa7; --s6: #e34948; --s7: #e87ba4; --s8: #eb6834;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .viz-root {
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --page:           #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --muted:          #898781;
+      --gridline:       #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --good:           #0ca30c;
+      --critical:       #d03b3b;
+      --s1: #3987e5; --s2: #199e70; --s3: #c98500; --s4: #008300;
+      --s5: #9085e9; --s6: #e66767; --s7: #d55181; --s8: #d95926;
+    }
+  }
+  :root[data-theme="dark"] .viz-root {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --page:           #0d0d0d;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --muted:          #898781;
+    --gridline:       #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --good:           #0ca30c;
+    --critical:       #d03b3b;
+    --s1: #3987e5; --s2: #199e70; --s3: #c98500; --s4: #008300;
+    --s5: #9085e9; --s6: #e66767; --s7: #d55181; --s8: #d95926;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .viz-root {
+    padding: 32px 24px 64px; max-width: 1100px; margin: 0 auto;
+    min-height: 100%;
+    background: var(--page);
+    color: var(--text-primary);
+  }
+
+  header { margin-bottom: 28px; }
+  header h1 { font-size: 22px; font-weight: 600; margin: 0 0 4px; }
+  header p { margin: 0; color: var(--text-secondary); font-size: 14px; }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 32px; }
+  .stat-tile {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px;
+  }
+  .stat-tile .label { font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; }
+  .stat-tile .value { font-size: 28px; font-weight: 600; font-variant-numeric: proportional-nums; }
+
+  section { margin-bottom: 36px; }
+  section h2 { font-size: 15px; font-weight: 600; margin: 0 0 12px; color: var(--text-primary); }
+
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px; overflow-x: auto;
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 6px 10px; border-bottom: 1px solid var(--gridline); white-space: nowrap; }
+  td { padding: 8px 10px; border-bottom: 1px solid var(--gridline); white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  td.wrap { white-space: normal; color: var(--text-secondary); max-width: 320px; }
+
+  .badge { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 500; }
+  .badge .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .badge.good { color: var(--good); }
+  .badge.good .dot { background: var(--good); }
+  .badge.critical { color: var(--critical); }
+  .badge.critical .dot { background: var(--critical); }
+
+  .bar-row { display: grid; grid-template-columns: 140px 1fr 44px; align-items: center; gap: 10px; padding: 6px 0; }
+  .bar-row .name { font-size: 13px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar-track { background: var(--gridline); border-radius: 4px; height: 20px; position: relative; }
+  .bar-fill { height: 20px; border-radius: 0 4px 4px 0; }
+  .bar-row .count { font-size: 12px; color: var(--text-secondary); text-align: right; font-variant-numeric: tabular-nums; }
+
+  .empty { color: var(--muted); font-size: 13px; padding: 12px 0; }
+  footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 24px; }
+</style>
+</head>
+<body>
+<div class="viz-root">
+  <header>
+    <h1>Common Network</h1>
+    <p>Live registry and routing activity — this network is permissionless and transparent by design.</p>
+  </header>
+
+  <div class="stats" id="stats"></div>
+
+  <section>
+    <h2>Nodes</h2>
+    <div class="card"><div id="nodes-table"></div></div>
+  </section>
+
+  <section>
+    <h2>Requests routed by node <span style="color:var(--muted); font-weight:400;">(last 50 decisions)</span></h2>
+    <div class="card"><div id="routing-chart"></div></div>
+  </section>
+
+  <section>
+    <h2>Recent decisions</h2>
+    <div class="card"><div id="decisions-table"></div></div>
+  </section>
+
+  <footer>Auto-refreshes every 5s · <span id="last-updated"></span></footer>
+</div>
+
+<script>
+const CATEGORICAL_SLOTS = ['--s1','--s2','--s3','--s4','--s5','--s6','--s7','--s8'];
+const nodeColorAssignment = new Map();
+
+function colorFor(name) {
+  if (!nodeColorAssignment.has(name)) {
+    const idx = nodeColorAssignment.size % CATEGORICAL_SLOTS.length;
+    nodeColorAssignment.set(name, CATEGORICAL_SLOTS[idx]);
+  }
+  return `var(${nodeColorAssignment.get(name)})`;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function fmtTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function renderStats(nodes, decisions) {
+  const healthy = nodes.filter(n => n.healthy).length;
+  const unhealthy = nodes.length - healthy;
+  const ok = decisions.filter(d => d.ok).length;
+  const tiles = [
+    ['Total nodes', nodes.length],
+    ['Healthy', healthy],
+    ['Unhealthy', unhealthy],
+    ['Recent decisions', decisions.length],
+    ['Successful', `${ok}/${decisions.length}`],
+  ];
+  document.getElementById('stats').innerHTML = tiles.map(([label, value]) => `
+    <div class="stat-tile">
+      <div class="label">${label}</div>
+      <div class="value">${value}</div>
+    </div>
+  `).join('');
+}
+
+function renderNodes(nodes) {
+  const el = document.getElementById('nodes-table');
+  if (nodes.length === 0) {
+    el.innerHTML = '<div class="empty">No nodes registered yet.</div>';
+    return;
+  }
+  el.innerHTML = `
+    <table>
+      <thead><tr>
+        <th>Name</th><th>Model</th><th>Region</th><th>Cost / 1k</th>
+        <th>Avg latency</th><th>Status</th><th>Capability</th>
+      </tr></thead>
+      <tbody>
+        ${nodes.map(n => `
+          <tr>
+            <td>${escapeHtml(n.name)}</td>
+            <td>${escapeHtml(n.model_name)}</td>
+            <td>${escapeHtml(n.region || '—')}</td>
+            <td>${n.cost_per_1k}</td>
+            <td>${n.avg_latency_ms} ms</td>
+            <td>${n.healthy
+              ? '<span class="badge good"><span class="dot"></span>healthy</span>'
+              : '<span class="badge critical"><span class="dot"></span>unhealthy</span>'}</td>
+            <td class="wrap">${escapeHtml(n.capability_text)}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderRoutingChart(nodes, decisions) {
+  const el = document.getElementById('routing-chart');
+  const nameById = new Map(nodes.map(n => [n.id, n.name]));
+  const counts = new Map();
+  for (const d of decisions) {
+    const name = nameById.get(d.chosen_node) || d.chosen_node_name || 'unknown';
+    if (!d.chosen_node) continue;
+    counts.set(name, (counts.get(name) || 0) + 1);
+  }
+  if (counts.size === 0) {
+    el.innerHTML = '<div class="empty">No routed requests yet.</div>';
+    return;
+  }
+  const max = Math.max(...counts.values());
+  el.innerHTML = Array.from(counts.entries()).map(([name, count]) => `
+    <div class="bar-row">
+      <div class="name">${escapeHtml(name)}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${(count/max*100).toFixed(1)}%; background:${colorFor(name)};"></div></div>
+      <div class="count">${count}</div>
+    </div>
+  `).join('');
+}
+
+function renderDecisions(decisions) {
+  const el = document.getElementById('decisions-table');
+  if (decisions.length === 0) {
+    el.innerHTML = '<div class="empty">No decisions logged yet.</div>';
+    return;
+  }
+  el.innerHTML = `
+    <table>
+      <thead><tr>
+        <th>Time</th><th>Chosen node</th><th>Score</th><th>Latency</th><th>Result</th>
+      </tr></thead>
+      <tbody>
+        ${decisions.map(d => `
+          <tr>
+            <td>${fmtTime(d.created_at)}</td>
+            <td>${escapeHtml(d.chosen_node_name || '—')}</td>
+            <td>${d.score != null ? d.score.toFixed(3) : '—'}</td>
+            <td>${d.latency_ms != null ? d.latency_ms + ' ms' : '—'}</td>
+            <td>${d.ok
+              ? '<span class="badge good"><span class="dot"></span>ok</span>'
+              : '<span class="badge critical"><span class="dot"></span>failed</span>'}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+async function refresh() {
+  try {
+    const [nodes, decisions] = await Promise.all([
+      fetch('/nodes').then(r => r.json()),
+      fetch('/decisions/recent?limit=50').then(r => r.json()),
+    ]);
+    renderStats(nodes, decisions);
+    renderNodes(nodes);
+    renderRoutingChart(nodes, decisions);
+    renderDecisions(decisions);
+    document.getElementById('last-updated').textContent = 'updated ' + new Date().toLocaleTimeString();
+  } catch (e) {
+    document.getElementById('last-updated').textContent = 'update failed — retrying…';
+  }
+}
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>
