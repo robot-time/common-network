@@ -10,11 +10,14 @@ Requires: Python 3.8+, Ollama (https://ollama.com/download), cloudflared
 (https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/).
 
 Usage:
-    python3 join.py --gateway https://your-gateway.example --secret SHARED_SECRET
+    python3 join.py --secret SHARED_SECRET
 
-Everything else has a sensible default — see --help.
+Joins the default shared Common Network gateway unless --gateway overrides
+it. If --secret is omitted you'll be prompted for it. Everything else has
+a sensible default — see --help.
 """
 import argparse
+import getpass
 import json
 import os
 import platform
@@ -31,6 +34,10 @@ import urllib.request
 
 OLLAMA_URL = "http://localhost:11434"
 TUNNEL_URL_PATTERN = re.compile(r"https://[a-zA-Z0-9.-]+\.trycloudflare\.com")
+
+# The default, shared Common Network gateway. Override with --gateway to
+# join (or run) a different network entirely.
+DEFAULT_GATEWAY = "https://gateway-production-b820.up.railway.app"
 
 
 def die(msg: str, code: int = 1) -> None:
@@ -126,8 +133,8 @@ def start_tunnel() -> tuple[subprocess.Popen, str]:
 def main() -> None:
     sys.stdout.reconfigure(line_buffering=True)
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--gateway", default=os.environ.get("COMMON_GATEWAY_URL"), help="Gateway base URL, e.g. https://my-gateway.up.railway.app")
-    parser.add_argument("--secret", default=os.environ.get("COMMON_REGISTRY_SECRET"), help="Shared registry secret")
+    parser.add_argument("--gateway", default=os.environ.get("COMMON_GATEWAY_URL", DEFAULT_GATEWAY), help="Gateway base URL (default: the shared Common Network gateway)")
+    parser.add_argument("--secret", default=os.environ.get("COMMON_REGISTRY_SECRET"), help="Shared registry secret (will prompt if not given)")
     parser.add_argument("--model", default="llama3.2:3b", help="Ollama model to serve (default: llama3.2:3b)")
     parser.add_argument("--name", default=f"{socket.gethostname()}-{os.environ.get('USER', 'node')}", help="Unique node name")
     parser.add_argument("--operator", default=os.environ.get("USER", "friend"), help="Your name")
@@ -136,10 +143,11 @@ def main() -> None:
     parser.add_argument("--capability", default=None, help="Override the auto-generated capability description")
     args = parser.parse_args()
 
-    if not args.gateway:
-        die("--gateway is required (or set COMMON_GATEWAY_URL)")
     if not args.secret:
-        die("--secret is required (or set COMMON_REGISTRY_SECRET)")
+        if sys.stdin.isatty():
+            args.secret = getpass.getpass("Enter the network secret you were given: ").strip()
+        if not args.secret:
+            die("--secret is required (or set COMMON_REGISTRY_SECRET)")
 
     gateway = args.gateway.rstrip("/")
 
