@@ -378,7 +378,6 @@ def remove_permanent() -> None:
 def main() -> None:
     sys.stdout.reconfigure(line_buffering=True)
     _enable_windows_ansi()
-    print(style(BANNER, "white", "bold"))
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--gateway", default=os.environ.get("COMMON_GATEWAY_URL", DEFAULT_GATEWAY), help="Gateway base URL (default: the shared Common Network gateway)")
     parser.add_argument("--secret", default=os.environ.get("COMMON_REGISTRY_SECRET"), help="Shared registry secret (will prompt if not given)")
@@ -398,6 +397,8 @@ def main() -> None:
         if remote:
             print(style("Updating to the latest version...", "yellow"))
             apply_update_and_restart(remote)
+
+    print(style(BANNER, "white", "bold"))
 
     if args.remove_permanent:
         remove_permanent()
