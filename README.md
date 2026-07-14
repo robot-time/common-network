@@ -90,18 +90,20 @@ explicitly **not** production-grade auth, just enough friction for v0.1.
 
 ## Contributing a node (for friends)
 
-Want to run your own machine as a node — no need to clone this whole repo
-or install Python packages beyond the standard library. See
-[`join/README.md`](join/README.md). Short version:
+Setup is meant to be as easy as installing Ollama. See
+[`join/README.md`](join/README.md) for full details. Short version:
 
 ```bash
-python3 join/join.py --gateway https://gateway-production-b820.up.railway.app --secret <ASK_FOR_THE_SHARED_SECRET>
+curl -fsSL https://raw.githubusercontent.com/robot-time/common-network/main/install.sh | sh
+common-join
 ```
 
-This opens a free Cloudflare tunnel to your local Ollama, registers it with
-the shared gateway, and keeps it online until you press `Ctrl+C`. The
-shared secret is deliberately not committed here — ask whoever runs the
-network for it.
+(Windows: `irm https://raw.githubusercontent.com/robot-time/common-network/main/install.ps1 | iex`)
+
+`common-join` will ask for the network secret — ask whoever runs the
+network for it, it's deliberately not committed here. It then opens a free
+Cloudflare tunnel to your local Ollama, registers it with the shared
+gateway, and keeps it online until you press `Ctrl+C`.
 
 The live gateway for this network is:
 `https://gateway-production-b820.up.railway.app`
