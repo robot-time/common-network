@@ -198,6 +198,180 @@ def ensure_model(model: str) -> None:
         die(f"failed to pull model '{model}'")
 
 
+def probe_hardware() -> dict:
+    """Best-effort hardware profile: total/available RAM, GPU, disk, CPU, OS.
+
+    Deliberately stdlib + platform-native commands only, no psutil -- this
+    script's whole design point is zero pip dependencies (curl one-liner
+    install, no venv). A little more platform-branch code here is the right
+    trade for keeping that property.
+    """
+    system = platform.system()
+    total_ram_gb = available_ram_gb = 0.0
+    gpu_present = False
+    vram_gb = 0.0
+
+    if system == "Darwin":
+        try:
+            total_bytes = int(subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, timeout=5).stdout.strip())
+            total_ram_gb = total_bytes / (1024 ** 3)
+        except Exception:
+            pass
+        try:
+            vm = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=5).stdout
+            page_size = 4096
+            m = re.search(r"page size of (\d+) bytes", vm)
+            if m:
+                page_size = int(m.group(1))
+            free_pages = 0
+            for label in ("Pages free", "Pages inactive"):
+                m = re.search(rf"{label}:\s+(\d+)\.", vm)
+                if m:
+                    free_pages += int(m.group(1))
+            available_ram_gb = (free_pages * page_size) / (1024 ** 3)
+        except Exception:
+            available_ram_gb = total_ram_gb * 0.5  # unknown -- assume half free
+        # Apple Silicon has a unified-memory GPU always available for Metal.
+        gpu_present = platform.machine() == "arm64"
+        vram_gb = 0  # unified memory, no separate VRAM figure
+
+    elif system == "Linux":
+        try:
+            with open("/proc/meminfo") as f:
+                meminfo = f.read()
+            total_kb = int(re.search(r"MemTotal:\s+(\d+)", meminfo).group(1))
+            avail_kb = int(re.search(r"MemAvailable:\s+(\d+)", meminfo).group(1))
+            total_ram_gb = total_kb / (1024 ** 2)
+            available_ram_gb = avail_kb / (1024 ** 2)
+        except Exception:
+            pass
+        if shutil.which("nvidia-smi"):
+            try:
+                out = subprocess.run(
+                    ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+                    capture_output=True, text=True, timeout=5,
+                ).stdout.strip().splitlines()
+                if out:
+                    vram_gb = int(out[0]) / 1024
+                    gpu_present = True
+            except Exception:
+                pass
+
+    elif system == "Windows":
+        try:
+            import ctypes
+
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("sullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            stat = MEMORYSTATUSEX()
+            stat.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
+            total_ram_gb = stat.ullTotalPhys / (1024 ** 3)
+            available_ram_gb = stat.ullAvailPhys / (1024 ** 3)
+        except Exception:
+            pass
+        # GPU detection on Windows is best-effort/untested, consistent with
+        # install.ps1's existing caveat -- default to none rather than guess.
+
+    try:
+        free_disk_gb = shutil.disk_usage(str(Path.home())).free / (1024 ** 3)
+    except Exception:
+        free_disk_gb = None
+
+    return {
+        "total_ram_gb": round(total_ram_gb, 1),
+        "available_ram_gb": round(available_ram_gb, 1),
+        "gpu_present": gpu_present,
+        "vram_gb": round(vram_gb, 1),
+        "free_disk_gb": round(free_disk_gb, 1) if free_disk_gb is not None else None,
+        "cpu_cores": os.cpu_count(),
+        "os": system,
+    }
+
+
+def fetch_catalogue(gateway: str) -> list[dict]:
+    return http_json("GET", f"{gateway}/catalogue")
+
+
+def call_assign(gateway: str, hardware: dict) -> dict:
+    return http_json("POST", f"{gateway}/assign", body={"hardware": hardware})
+
+
+def source_to_ollama_tag(source: str) -> str | None:
+    return source[len("ollama:"):] if source.startswith("ollama:") else None
+
+
+def prompt_yes_no(question: str, default_yes: bool = True) -> bool:
+    suffix = "[Y/n]" if default_yes else "[y/N]"
+    if not sys.stdin.isatty():
+        return default_yes
+    answer = input(f"{question} {suffix} ").strip().lower()
+    if not answer:
+        return default_yes
+    return answer.startswith("y")
+
+
+def print_catalogue(gateway: str, hw: dict) -> None:
+    catalogue = fetch_catalogue(gateway)
+    headroom_ram = hw["available_ram_gb"] * 0.8
+    print(dim(f"Your machine: {hw['total_ram_gb']}GB RAM ({hw['available_ram_gb']}GB available), "
+              f"{'GPU present' if hw['gpu_present'] else 'no GPU'}, {hw['cpu_cores']} CPU cores, {hw['os']}\n"))
+    for m in catalogue:
+        runnable = m["min_ram_gb"] <= headroom_ram and (not m["needs_gpu"] or hw["gpu_present"])
+        mark = style("✓ runnable", "green") if runnable else style("✗ needs more RAM/GPU", "red")
+        verified = style(" [verified beats frontier in lane]", "green") if m["verified_in_lane"] else ""
+        print(f"  {m['id']:20s} {mark}{verified}")
+        print(dim(f"    {m['capability_text'].strip()}"))
+        print(dim(f"    tags: {', '.join(m['domain_tags'])}  ·  min RAM: {m['min_ram_gb']}GB  ·  source: {m['source']}\n"))
+
+
+def resolve_model(gateway: str, args: argparse.Namespace) -> tuple[str, list[str] | None, str | None, str | None]:
+    """Returns (ollama_tag, domain_tags, catalogue_id, capability_text_default)."""
+    if args.model:
+        catalogue = fetch_catalogue(gateway)
+        match = next((m for m in catalogue if m["id"] == args.model), None)
+        if match:
+            ollama_tag = source_to_ollama_tag(match["source"])
+            if not ollama_tag:
+                die(f"'{args.model}' is an API-based catalogue entry ({match['source']}) -- not something common-join can run locally.")
+            return ollama_tag, match["domain_tags"], match["id"], match["capability_text"]
+        # Not a catalogue id -- treat as a raw Ollama model tag, same as pre-v0.3.
+        return args.model, None, None, None
+
+    print(style("Probing your machine's hardware...", "cyan"))
+    hw = probe_hardware()
+    print(dim(f"{hw['total_ram_gb']}GB RAM ({hw['available_ram_gb']}GB available), "
+              f"{'GPU present' if hw['gpu_present'] else 'no GPU'}, {hw['cpu_cores']} CPU cores, {hw['os']}"))
+
+    assignment = call_assign(gateway, hw)
+    print(style(f"→ Recommended: {assignment['display_name']}", "blue", "bold"))
+    print(dim(f"  {assignment['reason']}\n"))
+
+    ollama_tag = source_to_ollama_tag(assignment["source"])
+    if not ollama_tag:
+        print(style(
+            f"The network's biggest need right now ({', '.join(assignment['domain_tags'])}) is served by an "
+            f"API-hosted specialist ({assignment['source']}), not something common-join can pull and run locally.",
+            "yellow",
+        ))
+        print(dim("See other options with --list-catalogue, or pick one directly with --model <id>."))
+        sys.exit(0)
+
+    if not args.auto:
+        if not prompt_yes_no(f"Provision {assignment['display_name']} on this machine?"):
+            print(dim("No changes made. Use --model <id> to pick manually, or --list-catalogue to see options."))
+            sys.exit(0)
+
+    return ollama_tag, assignment["domain_tags"], assignment["catalogue_id"], assignment["capability_text"]
+
+
 TUNNEL_HEALTH_CHECK_INTERVAL_SECONDS = 120  # quick tunnels can silently reconnect with a new hostname without the process dying
 
 
@@ -397,7 +571,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--gateway", default=os.environ.get("COMMON_GATEWAY_URL", DEFAULT_GATEWAY), help="Gateway base URL (default: the shared Common Network gateway)")
     parser.add_argument("--secret", default=os.environ.get("COMMON_REGISTRY_SECRET"), help="Shared registry secret (will prompt if not given)")
-    parser.add_argument("--model", default="llama3.2:3b", help="Ollama model to serve (default: llama3.2:3b)")
+    parser.add_argument("--model", default=None, help="Catalogue id (e.g. qwen2.5-coder-7b) or raw Ollama model tag. Default: probe hardware and ask the network what it needs most (see --auto, --list-catalogue)")
+    parser.add_argument("--auto", action="store_true", help="Accept the network's recommended model automatically, no confirmation prompt")
+    parser.add_argument("--list-catalogue", action="store_true", help="List catalogue models this machine can run, then exit")
     parser.add_argument("--name", default=f"{socket.gethostname()}-{os.environ.get('USER', 'node')}", help="Unique node name")
     parser.add_argument("--operator", default=os.environ.get("USER", "friend"), help="Your name")
     parser.add_argument("--region", default=None, help="Optional region hint, e.g. au-adelaide")
@@ -420,38 +596,52 @@ def main() -> None:
         remove_permanent()
         return
 
+    gateway = args.gateway.rstrip("/")
+
+    if args.list_catalogue:
+        hw = probe_hardware()
+        print_catalogue(gateway, hw)
+        return
+
     if not args.secret:
         if sys.stdin.isatty():
             args.secret = getpass.getpass("Enter the network secret you were given: ").strip()
         if not args.secret:
             die("--secret is required (or set COMMON_REGISTRY_SECRET)")
 
+    ollama_tag, domain_tags, catalogue_id, capability_text_default = resolve_model(gateway, args)
+    # Bake the resolution into args.model so --permanent's saved service
+    # invocation re-resolves the same way on every restart -- the catalogue
+    # id round-trips back through resolve_model()'s lookup branch; a raw tag
+    # (no catalogue match) just flows through unchanged.
+    args.model = catalogue_id or ollama_tag
+
     if args.permanent:
         install_permanent(args)
         return
 
-    gateway = args.gateway.rstrip("/")
-
     check_binaries()
     ensure_ollama_running()
-    ensure_model(args.model)
+    ensure_model(ollama_tag)
 
     print(style("Opening a Cloudflare quick tunnel to your local Ollama...", "cyan"))
     tunnel_proc, tunnel_url = start_tunnel()
     print(style(f"Tunnel live at {tunnel_url}", "green"))
 
-    capability_text = args.capability or (
-        f"{args.model} running locally via Ollama, contributed by {args.operator}. Free, community-hosted."
+    capability_text = args.capability or capability_text_default or (
+        f"{ollama_tag} running locally via Ollama, contributed by {args.operator}. Free, community-hosted."
     )
 
     payload = {
         "name": args.name,
         "operator": args.operator,
         "endpoint_url": f"{tunnel_url}/v1",
-        "model_name": args.model,
+        "model_name": ollama_tag,
         "capability_text": capability_text,
         "region": args.region,
         "cost_per_1k": args.cost,
+        "domain_tags": domain_tags,
+        "catalogue_id": catalogue_id,
     }
 
     print(style(f"Registering '{args.name}' with {gateway}...", "cyan"))

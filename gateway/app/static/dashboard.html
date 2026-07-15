@@ -104,6 +104,27 @@
 
   .empty { color: var(--muted); font-size: 13px; padding: 12px 0; }
   footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 24px; }
+
+  .tag-chip {
+    display: inline-block; font-size: 11px; padding: 2px 7px; border-radius: 100px;
+    background: var(--gridline); color: var(--text-secondary); margin: 0 4px 4px 0;
+  }
+  .verified-chip {
+    display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 500;
+    padding: 2px 8px; border-radius: 100px; background: var(--good); color: var(--surface-1);
+  }
+  .catalogue-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+  .catalogue-card {
+    border: 1px dashed var(--border); border-radius: 8px; padding: 12px; background: var(--page);
+  }
+  .catalogue-card .name { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+  .catalogue-card .meta { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .gap-row { display: grid; grid-template-columns: 140px 1fr 90px; align-items: center; gap: 10px; padding: 6px 0; font-size: 13px; }
+  .gap-row .domain { text-transform: capitalize; }
+  .gap-track { background: var(--gridline); border-radius: 4px; height: 16px; position: relative; display: flex; }
+  .gap-fill-coverage { height: 16px; background: var(--good); border-radius: 4px 0 0 4px; }
+  .gap-fill-demand { height: 16px; background: var(--critical); opacity: 0.55; }
+  .gap-label { font-size: 12px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
@@ -118,6 +139,16 @@
   <section>
     <h2>Nodes</h2>
     <div class="card"><div id="nodes-table"></div></div>
+  </section>
+
+  <section>
+    <h2>Domain coverage <span style="color:var(--muted); font-weight:400;">(demand vs. healthy nodes serving it, last 50 decisions)</span></h2>
+    <div class="card"><div id="coverage-chart"></div></div>
+  </section>
+
+  <section>
+    <h2>Specialist catalogue <span style="color:var(--muted); font-weight:400;">(models the network can assign to a joining machine — not currently-running nodes)</span></h2>
+    <div class="card"><div id="catalogue-grid"></div></div>
   </section>
 
   <section>
@@ -174,6 +205,11 @@ function renderStats(nodes, decisions) {
   `).join('');
 }
 
+function renderTags(tags) {
+  if (!tags || tags.length === 0) return '';
+  return tags.map(t => `<span class="tag-chip">${escapeHtml(t)}</span>`).join('');
+}
+
 function renderNodes(nodes) {
   const el = document.getElementById('nodes-table');
   if (nodes.length === 0) {
@@ -183,14 +219,15 @@ function renderNodes(nodes) {
   el.innerHTML = `
     <table>
       <thead><tr>
-        <th>Name</th><th>Model</th><th>Region</th><th>Cost / 1k</th>
-        <th>Avg latency</th><th>Status</th><th>Capability</th>
+        <th>Name</th><th>Model</th><th>Domain</th><th>Region</th><th>Cost / 1k</th>
+        <th>Avg latency</th><th>Status</th><th>What it does</th>
       </tr></thead>
       <tbody>
         ${nodes.map(n => `
           <tr>
             <td>${escapeHtml(n.name)}</td>
             <td>${escapeHtml(n.model_name)}</td>
+            <td>${n.domain_tags ? renderTags(n.domain_tags) : '<span class="empty">untagged</span>'}</td>
             <td>${escapeHtml(n.region || '—')}</td>
             <td>${n.cost_per_1k}</td>
             <td>${n.avg_latency_ms} ms</td>
@@ -203,6 +240,57 @@ function renderNodes(nodes) {
       </tbody>
     </table>
   `;
+}
+
+function renderCatalogue(catalogue) {
+  const el = document.getElementById('catalogue-grid');
+  if (!catalogue || catalogue.length === 0) {
+    el.innerHTML = '<div class="empty">Catalogue is empty.</div>';
+    return;
+  }
+  el.innerHTML = `<div class="catalogue-grid">${catalogue.map(m => `
+    <div class="catalogue-card">
+      <div class="name">${escapeHtml(m.display_name)}${m.verified_in_lane ? ' <span class="verified-chip">✓ verified in lane</span>' : ''}</div>
+      <div>${renderTags(m.domain_tags)}</div>
+      <div class="meta">${escapeHtml(m.capability_text)}</div>
+      <div class="meta">min RAM: ${m.min_ram_gb}GB${m.params_b ? ` · ${m.params_b}B params` : ''} · ${escapeHtml(m.source)}</div>
+    </div>
+  `).join('')}</div>`;
+}
+
+function renderCoverage(nodes, decisions) {
+  const el = document.getElementById('coverage-chart');
+  const demand = new Map();
+  for (const d of decisions) {
+    if (!d.matched_domain) continue;
+    demand.set(d.matched_domain, (demand.get(d.matched_domain) || 0) + 1);
+  }
+  const coverage = new Map();
+  for (const n of nodes) {
+    if (!n.healthy || !n.domain_tags) continue;
+    for (const t of n.domain_tags) coverage.set(t, (coverage.get(t) || 0) + 1);
+  }
+  const domains = new Set([...demand.keys(), ...coverage.keys()]);
+  if (domains.size === 0) {
+    el.innerHTML = '<div class="empty">No domain-matched decisions yet.</div>';
+    return;
+  }
+  const maxVal = Math.max(1, ...demand.values(), ...coverage.values());
+  el.innerHTML = Array.from(domains).sort().map(domain => {
+    const d = demand.get(domain) || 0;
+    const c = coverage.get(domain) || 0;
+    const gap = (d / (c + 1)).toFixed(2);
+    return `
+      <div class="gap-row">
+        <div class="domain">${escapeHtml(domain)}</div>
+        <div class="gap-track">
+          <div class="gap-fill-coverage" style="width:${(c/maxVal*100).toFixed(1)}%"></div>
+          <div class="gap-fill-demand" style="width:${(d/maxVal*100).toFixed(1)}%"></div>
+        </div>
+        <div class="gap-label">${d} req · ${c} node${c === 1 ? '' : 's'} · gap ${gap}</div>
+      </div>
+    `;
+  }).join('');
 }
 
 function renderRoutingChart(nodes, decisions) {
@@ -258,12 +346,15 @@ function renderDecisions(decisions) {
 
 async function refresh() {
   try {
-    const [nodes, decisions] = await Promise.all([
+    const [nodes, decisions, catalogue] = await Promise.all([
       fetch('/nodes').then(r => r.json()),
       fetch('/decisions/recent?limit=50').then(r => r.json()),
+      fetch('/catalogue').then(r => r.json()),
     ]);
     renderStats(nodes, decisions);
     renderNodes(nodes);
+    renderCoverage(nodes, decisions);
+    renderCatalogue(catalogue);
     renderRoutingChart(nodes, decisions);
     renderDecisions(decisions);
     document.getElementById('last-updated').textContent = 'updated ' + new Date().toLocaleTimeString();
