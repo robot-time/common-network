@@ -9,12 +9,18 @@ capability, not by a corporate gatekeeper.
 Common speaks the OpenAI API. Point any existing OpenAI SDK client at the
 gateway and it works unchanged — except every response tells you exactly
 which node served it, and why it was chosen. The commons should be legible.
-Or just use `common-chat` — a terminal client, no API knowledge required:
+Or just use `common` — a terminal client, no API knowledge required:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/robot-time/common-network/main/install.sh | sh
-common-chat "What's a good way to learn recursion?"
+common ask "What's a good way to learn recursion?"
 ```
+
+`common` is the full CLI — `ask`, `join` (contribute a node), `leave`,
+`serve <model>`, `status`, `demand`, `peers`, `contrib`, `whoami`, `config`,
+or just run `common` with no arguments for an interactive session. See
+[`common/README.md`](common/README.md). (`common-chat`/`common-join` from
+earlier versions still work too, if you're already using them.)
 
 This is **v0.1**: a single gateway, a Postgres node registry, and a
 heuristic router. No DHT, no token, no weight merging — see
