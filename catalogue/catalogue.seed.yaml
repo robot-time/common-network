@@ -1,0 +1,117 @@
+# Common Network specialist catalogue.
+#
+# This is a commons asset — PRs welcome. Add real, runnable models only.
+# `verified_in_lane: true` is earned by the v0.2 benchmark harness
+# (bench/) actually measuring a model beating a frontier model in its
+# domain — never set it because a model "should" be good. See
+# `lane_benchmark` for the measurement that earned it, and its `date`.
+#
+# min_ram_gb / min_vram_gb / needs_gpu gate what common-join will ever
+# recommend for a given machine — leave real headroom, a specialist that
+# swaps and times out is worse than a generalist that answers.
+
+models:
+  - id: qwen2.5-coder-7b
+    display_name: Qwen2.5 Coder 7B
+    source: "ollama:qwen2.5-coder:7b"
+    domain_tags: [code, python, programming]
+    capability_text: >
+      Qwen2.5 Coder 7B. Strong at code generation, debugging, and
+      structured reasoning across common languages. Runs comfortably on a
+      consumer laptop.
+    params_b: 7.6
+    min_ram_gb: 8
+    min_vram_gb: 0
+    needs_gpu: false
+    verified_in_lane: false
+    lane_benchmark: null
+    licence: apache-2.0
+
+  - id: qwen2.5-coder-14b
+    display_name: Qwen2.5 Coder 14B
+    source: "ollama:qwen2.5-coder:14b"
+    domain_tags: [code, python, programming]
+    capability_text: >
+      Qwen2.5 Coder 14B. Stronger code generation and multi-file reasoning
+      than the 7B tier, for machines with more RAM to spare.
+    params_b: 14.8
+    min_ram_gb: 16
+    min_vram_gb: 0
+    needs_gpu: false
+    verified_in_lane: false
+    lane_benchmark: null
+    licence: apache-2.0
+
+  - id: qwen2-math-7b
+    display_name: Qwen2 Math 7B
+    source: "ollama:qwen2-math:7b"
+    domain_tags: [math, arithmetic, algebra, word-problems]
+    capability_text: >
+      Qwen2 Math 7B. Purpose-built for mathematical reasoning — arithmetic,
+      algebra, and grade-school-to-competition word problems.
+    params_b: 7.0
+    min_ram_gb: 8
+    min_vram_gb: 0
+    needs_gpu: false
+    verified_in_lane: false
+    lane_benchmark: null
+    licence: apache-2.0
+
+  - id: llama3.2-3b
+    display_name: Llama 3.2 3B
+    source: "ollama:llama3.2:3b"
+    domain_tags: [general, conversation, writing]
+    capability_text: >
+      Llama 3.2 3B. Small, fast general-purpose model — everyday
+      conversation, writing, and world-knowledge questions. The
+      lightest-footprint catalogue entry; runs on almost anything.
+    params_b: 3.2
+    min_ram_gb: 4
+    min_vram_gb: 0
+    needs_gpu: false
+    verified_in_lane: false
+    lane_benchmark: null
+    licence: llama3.2
+
+  - id: llama3.1-8b
+    display_name: Llama 3.1 8B
+    source: "ollama:llama3.1:8b"
+    domain_tags: [general, conversation, writing, reasoning]
+    capability_text: >
+      Llama 3.1 8B. A stronger general-purpose catch-all than the 3B tier —
+      better reasoning and writing quality, for machines with a bit more
+      RAM to spare.
+    params_b: 8.0
+    min_ram_gb: 8
+    min_vram_gb: 0
+    needs_gpu: false
+    verified_in_lane: false
+    lane_benchmark: null
+    licence: llama3.1
+
+  - id: cgla-legal
+    display_name: CGLA-Legal
+    source: "api:cgla-legal"
+    domain_tags: [legal, south-australia-law]
+    capability_text: >
+      CGLA-Legal: neurosymbolic South Australian law reasoning across 14
+      domains (residential tenancy, unfair dismissal, family violence,
+      consumer protection, debt hardship, and others). Structurally
+      cannot hallucinate. Grounded legal reasoning only — not a general
+      chat model, will not answer outside SA law.
+    params_b: null
+    min_ram_gb: 0
+    min_vram_gb: 0
+    needs_gpu: false
+    verified_in_lane: true
+    lane_benchmark:
+      benchmark: "22 SA-law scenarios (internal CGLA evaluation, pre-v0.2)"
+      score: "100%"
+      vs_frontier: "31.8%"
+      date: null
+      note: >
+        This number comes from CGLA's own prior evaluation, not yet
+        independently reproduced by the v0.2 harness -- that reproduction
+        is blocked on the CGLA adapter and dataset (see bench/data/README.md).
+        Treat as provisional until bench/ confirms it directly.
+    licence: null

@@ -27,6 +27,8 @@ def _row_to_node_out(row) -> NodeOut:
         healthy=row["healthy"],
         last_heartbeat=row["last_heartbeat"].isoformat() if row["last_heartbeat"] else None,
         capability_text=row["capability_text"],
+        domain_tags=row["domain_tags"],
+        catalogue_id=row["catalogue_id"],
     )
 
 
@@ -39,8 +41,9 @@ async def register_node(node: NodeCreate, x_common_secret: str | None = Header(d
             """
             insert into nodes
                 (name, operator, endpoint_url, model_name, api_key_ref,
-                 capability_text, capability_embed, region, cost_per_1k)
-            values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                 capability_text, capability_embed, region, cost_per_1k,
+                 domain_tags, catalogue_id)
+            values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             on conflict (name) do update set
                 operator = excluded.operator,
                 endpoint_url = excluded.endpoint_url,
@@ -49,11 +52,14 @@ async def register_node(node: NodeCreate, x_common_secret: str | None = Header(d
                 capability_text = excluded.capability_text,
                 capability_embed = excluded.capability_embed,
                 region = excluded.region,
-                cost_per_1k = excluded.cost_per_1k
+                cost_per_1k = excluded.cost_per_1k,
+                domain_tags = excluded.domain_tags,
+                catalogue_id = excluded.catalogue_id
             returning *
             """,
             node.name, node.operator, node.endpoint_url, node.model_name, node.api_key_ref,
             node.capability_text, vec, node.region, node.cost_per_1k,
+            node.domain_tags, node.catalogue_id,
         )
     return _row_to_node_out(row)
 

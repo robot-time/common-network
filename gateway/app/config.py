@@ -23,5 +23,26 @@ class Settings(BaseSettings):
     seed_file: str = "nodes.seed.yaml"
     seed_on_startup: bool = True
 
+    # Local dev runs uvicorn from gateway/, where catalogue/ is a sibling
+    # directory (../catalogue). The Docker image copies catalogue/ in as a
+    # child of /app instead -- Railway sets CATALOGUE_SEED_FILE=catalogue/...
+    # to override this default for deployment.
+    catalogue_seed_file: str = "../catalogue/catalogue.seed.yaml"
+    catalogue_seed_on_startup: bool = True
+
+    # Routing refinement (v0.3): below this *topical* score (similarity + tag
+    # overlap only, not cost/latency -- see ScoredNode.topical_score), prefer
+    # a generalist node over a low-confidence specialist match. Calibrated
+    # empirically: observed topical scores clustered ~0.35-0.40 for vague/
+    # generic queries and ~0.47+ for clearly on-topic ones in local testing.
+    routing_confidence_threshold: float = 0.40
+    # Tag overlap contributes this weight alongside the existing similarity/
+    # cost/latency score (see app/router.py).
+    w_tag_overlap: float = 0.15
+
+    # Node onboarding (v0.3): only ever assign a catalogue model if it leaves
+    # this much RAM headroom, so a specialist never swaps and times out.
+    assignment_ram_headroom: float = 0.8
+
 
 settings = Settings()

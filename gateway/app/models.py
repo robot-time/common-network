@@ -15,6 +15,8 @@ class NodeCreate(BaseModel):
     capability_text: str
     region: str | None = None
     cost_per_1k: float = 0
+    domain_tags: list[str] | None = None
+    catalogue_id: str | None = None
 
 
 class NodeOut(BaseModel):
@@ -29,6 +31,8 @@ class NodeOut(BaseModel):
     healthy: bool
     last_heartbeat: str | None
     capability_text: str
+    domain_tags: list[str] | None = None
+    catalogue_id: str | None = None
 
 
 # --- Decisions ---
@@ -42,6 +46,7 @@ class DecisionOut(BaseModel):
     latency_ms: int | None
     ok: bool | None
     created_at: str
+    matched_domain: str | None = None
 
 
 # --- OpenAI-compatible passthrough ---

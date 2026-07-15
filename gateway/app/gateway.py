@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from app import db, embedder
 from app.config import settings
-from app.router import ScoredNode, score_nodes
+from app.router import ScoredNode, best_matched_domain, score_nodes
 
 router = APIRouter()
 
@@ -42,13 +42,14 @@ async def _record_decision(
     runner_up: ScoredNode | None,
     latency_ms: int,
     ok: bool,
+    matched_domain: str | None = None,
 ) -> None:
     async with db.pool().acquire() as conn:
         await conn.execute(
             """
             insert into decisions
-                (request_embed, chosen_node, score, runner_up, latency_ms, ok)
-            values ($1, $2, $3, $4, $5, $6)
+                (request_embed, chosen_node, score, runner_up, latency_ms, ok, matched_domain)
+            values ($1, $2, $3, $4, $5, $6, $7)
             """,
             request_embed,
             chosen.node["id"] if chosen else None,
@@ -56,6 +57,7 @@ async def _record_decision(
             runner_up.node["id"] if runner_up else None,
             latency_ms,
             ok,
+            matched_domain,
         )
 
 
@@ -99,6 +101,7 @@ async def chat_completions(request: Request):
     request_embed = embedder.embed(routing_text)
     region_hint = request.headers.get("X-Common-Region")
     forced_node_name = request.headers.get("X-Common-Node")
+    matched_domain = best_matched_domain(nodes, request_embed)
 
     if forced_node_name:
         matches = [n for n in nodes if n["name"] == forced_node_name]
@@ -110,6 +113,14 @@ async def chat_completions(request: Request):
     else:
         scored = score_nodes(nodes, request_embed, region_hint)
         primary, backup = scored[0], (scored[1] if len(scored) > 1 else None)
+
+        # Low confidence on a narrow specialist match loses to frontier
+        # instantly -- prefer a confident generalist over a guessed specialist.
+        if scored[0].topical_score < settings.routing_confidence_threshold:
+            generalists = [s for s in scored if "general" in (s.node.get("domain_tags") or [])]
+            if generalists and generalists[0].node["id"] != scored[0].node["id"]:
+                primary, backup = generalists[0], scored[0]
+
         candidates = [primary] + ([backup] if backup else [])
 
     last_error: Exception | None = None
@@ -124,7 +135,7 @@ async def chat_completions(request: Request):
 
             await _update_latency(candidate.node["id"], latency_ms)
             runner_up = next((c for i, c in enumerate(candidates) if i != attempt), None)
-            await _record_decision(request_embed, candidate, runner_up, latency_ms, True)
+            await _record_decision(request_embed, candidate, runner_up, latency_ms, True, matched_domain)
 
             headers = {
                 "X-Common-Node": candidate.node["name"],
@@ -161,7 +172,7 @@ async def chat_completions(request: Request):
             last_error = exc
             latency_ms = int((time.monotonic() - start) * 1000)
             if attempt == len(candidates) - 1:
-                await _record_decision(request_embed, None, None, latency_ms, False)
+                await _record_decision(request_embed, None, None, latency_ms, False, matched_domain)
 
     raise HTTPException(status_code=502, detail=f"all candidate nodes failed: {last_error}")
 

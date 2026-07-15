@@ -6,12 +6,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+COPY gateway/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app ./app
-COPY migrations ./migrations
-COPY nodes.seed.yaml .
+COPY gateway/app ./app
+COPY gateway/migrations ./migrations
+COPY gateway/nodes.seed.yaml .
+COPY catalogue ./catalogue
 
 # Warm the embedding model into the image so first request isn't a cold download.
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-en-v1.5')"

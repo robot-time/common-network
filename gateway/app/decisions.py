@@ -12,7 +12,7 @@ async def recent_decisions(limit: int = Query(default=50, le=500)):
         rows = await conn.fetch(
             """
             select d.id, d.chosen_node, n.name as chosen_node_name,
-                   d.score, d.runner_up, d.latency_ms, d.ok, d.created_at
+                   d.score, d.runner_up, d.latency_ms, d.ok, d.created_at, d.matched_domain
             from decisions d
             left join nodes n on n.id = d.chosen_node
             order by d.created_at desc
@@ -30,6 +30,7 @@ async def recent_decisions(limit: int = Query(default=50, le=500)):
             latency_ms=r["latency_ms"],
             ok=r["ok"],
             created_at=r["created_at"].isoformat(),
+            matched_domain=r["matched_domain"],
         )
         for r in rows
     ]

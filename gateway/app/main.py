@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 
 from app import db, embedder
+from app.catalogue import router as catalogue_router, seed_catalogue_from_file
 from app.config import settings
 from app.decisions import router as decisions_router
 from app.gateway import router as gateway_router
@@ -20,6 +21,7 @@ async def lifespan(app: FastAPI):
     await db.connect()
     if settings.seed_on_startup:
         await seed_from_file()
+    await seed_catalogue_from_file()
     health_task = asyncio.create_task(health_check_loop())
     yield
     health_task.cancel()
@@ -36,6 +38,7 @@ app = FastAPI(
 app.include_router(registry_router)
 app.include_router(gateway_router)
 app.include_router(decisions_router)
+app.include_router(catalogue_router)
 
 
 @app.get("/health")
