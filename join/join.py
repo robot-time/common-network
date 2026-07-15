@@ -79,10 +79,14 @@ def _enable_windows_ansi() -> None:
         pass
 
 
-_ANSI_CODES = {
-    "reset": "0", "bold": "1", "dim": "2",
-    "red": "31", "green": "32", "yellow": "33",
-    "blue": "34", "magenta": "35", "cyan": "36", "white": "37",
+# COMMON. brand palette -- exactly four colours (see the CLI design doc).
+# No green, no purple, no gradients: restraint is the point. blue is the
+# only "active/positive" colour; red carries both emphasis and danger.
+PALETTE = {
+    "paper": (0xED, 0xE9, 0xE1),
+    "dim":   (0x8A, 0x86, 0x81),
+    "blue":  (0x92, 0xB4, 0xC8),
+    "red":   (0xC8, 0x44, 0x2A),
 }
 
 
@@ -90,19 +94,48 @@ def _color_enabled() -> bool:
     return sys.stdout.isatty() and not os.environ.get("NO_COLOR")
 
 
-def style(text: str, *codes: str) -> str:
+def fg(text: str, color: str, bold: bool = False) -> str:
     if not _color_enabled():
         return text
-    prefix = "".join(f"\033[{_ANSI_CODES[c]}m" for c in codes)
-    return f"{prefix}{text}\033[{_ANSI_CODES['reset']}m"
+    r, g, b = PALETTE[color]
+    prefix = ("\033[1m" if bold else "") + f"\033[38;2;{r};{g};{b}m"
+    return f"{prefix}{text}\033[0m"
 
 
 def dim(text: str) -> str:
-    return style(text, "dim")
+    return fg(text, "dim")
+
+
+def blue(text: str, bold: bool = False) -> str:
+    return fg(text, "blue", bold)
+
+
+def red(text: str, bold: bool = False) -> str:
+    return fg(text, "red", bold)
+
+
+def paper(text: str, bold: bool = False) -> str:
+    return fg(text, "paper", bold)
+
+
+# Fixed glyph vocabulary -- consistency over cleverness, see design doc 1.5.
+GLYPH_WORK = dim("·")       # working / neutral step
+GLYPH_ROUTE = blue("→")     # routing to / next / suggested action
+GLYPH_DONE = blue("✓")      # done / healthy / served
+GLYPH_FORMING = red("⚠")    # degraded / attention
+GLYPH_FAILED = red("✗")     # failed / offline / refused
+
+
+def comment(text: str) -> str:
+    return dim(f"# {text}")
+
+
+def working(text: str) -> None:
+    print(f"{GLYPH_WORK} {dim(text)}")
 
 
 def die(msg: str, code: int = 1) -> None:
-    print(style(f"error: {msg}", "red"), file=sys.stderr)
+    print(f"{GLYPH_FAILED} {red(msg)}", file=sys.stderr)
     sys.exit(code)
 
 
@@ -172,14 +205,20 @@ def apply_update_and_restart(remote: bytes) -> None:
         with open(local_path, "wb") as f:
             f.write(remote)
     except OSError as e:
-        print(style(f"warning: couldn't self-update ({e}), continuing with current version", "yellow"), file=sys.stderr)
+        print(f"{GLYPH_FORMING} {red(f'could not self-update ({e}), continuing with current version')}", file=sys.stderr)
         return
     os.execv(sys.executable, [sys.executable, local_path] + sys.argv[1:])
 
 
+def die_with_fix(msg: str, fix: str) -> None:
+    print(f"{GLYPH_FAILED} {red(msg)}", file=sys.stderr)
+    print(comment(fix), file=sys.stderr)
+    sys.exit(1)
+
+
 def check_binaries() -> None:
     if shutil.which("ollama") is None:
-        die("Ollama not found. Install it from https://ollama.com/download, then run this again.")
+        die_with_fix("ollama not found.", "install it from https://ollama.com/download, then run this again.")
     if shutil.which("cloudflared") is None:
         system = platform.system()
         hint = {
@@ -187,7 +226,7 @@ def check_binaries() -> None:
             "Linux": "see https://pkg.cloudflare.com/index.html for your distro",
             "Windows": "winget install --id Cloudflare.cloudflared",
         }.get(system, "see https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/")
-        die(f"cloudflared not found. Install it with: {hint}")
+        die_with_fix("cloudflared not found.", f"install it with: {hint}")
 
 
 def ensure_ollama_running() -> None:
@@ -197,7 +236,7 @@ def ensure_ollama_running() -> None:
     except (urllib.error.URLError, socket.timeout):
         pass
 
-    print(style("Ollama doesn't seem to be running — trying `ollama serve`...", "yellow"))
+    working("ollama doesn't seem to be running — trying `ollama serve`...")
     subprocess.Popen(
         ["ollama", "serve"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -210,7 +249,7 @@ def ensure_ollama_running() -> None:
             return
         except (urllib.error.URLError, socket.timeout):
             continue
-    die("Could not reach Ollama at localhost:11434. Start it manually and try again.")
+    die_with_fix("can't reach ollama at localhost:11434.", "start it manually and try again.")
 
 
 def ensure_model(model: str) -> None:
@@ -218,7 +257,7 @@ def ensure_model(model: str) -> None:
     names = {m["name"] for m in tags.get("models", [])}
     if model in names:
         return
-    print(style(f"Model '{model}' not found locally — pulling it now (this may take a while)...", "cyan"))
+    working(f"model '{model}' not found locally — pulling it now (this may take a while)...")
     result = subprocess.run(["ollama", "pull", model])
     if result.returncode != 0:
         die(f"failed to pull model '{model}'")
@@ -347,12 +386,12 @@ def prompt_yes_no(question: str, default_yes: bool = True) -> bool:
 def print_catalogue(gateway: str, hw: dict) -> None:
     catalogue = fetch_catalogue(gateway)
     headroom_ram = hw["available_ram_gb"] * 0.8
-    print(dim(f"Your machine: {hw['total_ram_gb']}GB RAM ({hw['available_ram_gb']}GB available), "
+    print(dim(f"your machine: {hw['total_ram_gb']}GB RAM ({hw['available_ram_gb']}GB available), "
               f"{'GPU present' if hw['gpu_present'] else 'no GPU'}, {hw['cpu_cores']} CPU cores, {hw['os']}\n"))
     for m in catalogue:
         runnable = m["min_ram_gb"] <= headroom_ram and (not m["needs_gpu"] or hw["gpu_present"])
-        mark = style("✓ runnable", "green") if runnable else style("✗ needs more RAM/GPU", "red")
-        verified = style(" [verified beats frontier in lane]", "green") if m["verified_in_lane"] else ""
+        mark = f"{GLYPH_DONE} runnable" if runnable else f"{GLYPH_FAILED} {red('needs more RAM/GPU')}"
+        verified = blue("  [verified beats frontier in lane]") if m["verified_in_lane"] else ""
         print(f"  {m['id']:20s} {mark}{verified}")
         print(dim(f"    {m['capability_text'].strip()}"))
         print(dim(f"    tags: {', '.join(m['domain_tags'])}  ·  min RAM: {m['min_ram_gb']}GB  ·  source: {m['source']}\n"))
@@ -366,42 +405,44 @@ def resolve_model(gateway: str, args: argparse.Namespace) -> tuple[str, list[str
         if match:
             ollama_tag = source_to_ollama_tag(match["source"])
             if not ollama_tag:
-                die(f"'{args.model}' is an API-based catalogue entry ({match['source']}) -- not something common-join can run locally.")
+                die(f"'{args.model}' is an API-based catalogue entry ({match['source']}) — not something common-join can run locally.")
             return ollama_tag, match["domain_tags"], match["id"], match["capability_text"]
         # Not a catalogue id -- treat as a raw Ollama model tag, same as pre-v0.3.
         return args.model, None, None, None
 
-    print(style("Probing your machine's hardware...", "cyan"))
+    working("probing your machine's hardware...")
     hw = probe_hardware()
-    print(dim(f"{hw['total_ram_gb']}GB RAM ({hw['available_ram_gb']}GB available), "
+    print(dim(f"  {hw['total_ram_gb']}GB RAM ({hw['available_ram_gb']}GB available), "
               f"{'GPU present' if hw['gpu_present'] else 'no GPU'}, {hw['cpu_cores']} CPU cores, {hw['os']}"))
 
     assignment = call_assign(gateway, hw)
-    print(style(f"→ Recommended: {assignment['display_name']}", "blue", "bold"))
-    print(dim(f"  {assignment['reason']}\n"))
+    print(f"{GLYPH_ROUTE} recommended   {blue(assignment['display_name'], bold=True)}")
+    print(comment(assignment["reason"]))
+    print()
 
     ollama_tag = source_to_ollama_tag(assignment["source"])
     if not ollama_tag:
-        print(style(
-            f"The network's biggest need right now ({', '.join(assignment['domain_tags'])}) is served by an "
-            f"API-hosted specialist ({assignment['source']}), not something common-join can pull and run locally.",
-            "yellow",
-        ))
+        print(f"{GLYPH_FORMING} {red('the network needs this most, but it can only run as a hosted API:')}")
+        print(comment(f"{', '.join(assignment['domain_tags'])} is served by {assignment['source']}, not something common-join can pull and run locally."))
         fallback = _best_local_fallback(gateway, hw, exclude_id=assignment["catalogue_id"])
         if not fallback:
-            print(dim("No locally-runnable catalogue model fits this machine either."))
-            print(dim("See --list-catalogue, or pick one directly with --model <id>."))
+            print(dim("no locally-runnable catalogue model fits this machine either."))
+            print(dim("  → see other options:   common-join --list-catalogue"))
             sys.exit(0)
-        print(style(f"→ Next best you can run locally: {fallback['display_name']}", "blue", "bold"))
+        print(f"{GLYPH_ROUTE} next best you can run locally   {blue(fallback['display_name'], bold=True)}")
         if not args.auto:
-            if not prompt_yes_no(f"Provision {fallback['display_name']} instead?"):
-                print(dim("No changes made. Use --model <id> to pick manually, or --list-catalogue to see options."))
+            if not prompt_yes_no(f"provision {fallback['display_name']} instead?"):
+                print(dim("no changes made."))
+                print(dim("  → pick manually:   common-join --model <id>"))
+                print(dim("  → see options:     common-join --list-catalogue"))
                 sys.exit(0)
         return source_to_ollama_tag(fallback["source"]), fallback["domain_tags"], fallback["id"], fallback["capability_text"]
 
     if not args.auto:
-        if not prompt_yes_no(f"Provision {assignment['display_name']} on this machine?"):
-            print(dim("No changes made. Use --model <id> to pick manually, or --list-catalogue to see options."))
+        if not prompt_yes_no(f"provision {assignment['display_name']} on this machine?"):
+            print(dim("no changes made."))
+            print(dim("  → pick manually:   common-join --model <id>"))
+            print(dim("  → see options:     common-join --list-catalogue"))
             sys.exit(0)
 
     return ollama_tag, assignment["domain_tags"], assignment["catalogue_id"], assignment["capability_text"]
@@ -524,9 +565,9 @@ def install_macos_service(argv: list[str]) -> None:
     uid = os.getuid()
     subprocess.run(["launchctl", "bootout", f"gui/{uid}/{LAUNCHD_LABEL}"], capture_output=True)
     subprocess.run(["launchctl", "bootstrap", f"gui/{uid}", str(plist_path)], check=True)
-    print(style("Installed as a background service (LaunchAgent) — it will start at login and restart if it crashes.", "green", "bold"))
-    print(dim(f"Logs: {log_path}"))
-    print(dim(f"To stop: python3 {os.path.abspath(__file__)} --remove-permanent --no-update"))
+    print(f"{GLYPH_DONE} {blue('installed as a background service (LaunchAgent)', bold=True)} — starts at login, restarts if it crashes.")
+    print(comment(f"logs: {log_path}"))
+    print(comment(f"to stop: python3 {os.path.abspath(__file__)} --remove-permanent --no-update"))
 
 
 def remove_macos_service() -> None:
@@ -535,7 +576,7 @@ def remove_macos_service() -> None:
     plist_path = _macos_plist_path()
     if plist_path.exists():
         plist_path.unlink()
-    print(style("Removed the background service.", "green"))
+    print(f"{GLYPH_DONE} removed the background service.")
 
 
 def _systemd_unit_path() -> Path:
@@ -563,10 +604,10 @@ WantedBy=default.target
 """)
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
     subprocess.run(["systemctl", "--user", "enable", "--now", SYSTEMD_UNIT], check=True)
-    print(style("Installed as a background service (systemd --user) — it will start at login and restart if it crashes.", "green", "bold"))
-    print(dim(f"Logs: journalctl --user -u {SYSTEMD_UNIT} -f"))
-    print(dim("If this is a server, also run `loginctl enable-linger $USER` so it keeps running after you log out."))
-    print(dim(f"To stop: python3 {os.path.abspath(__file__)} --remove-permanent --no-update"))
+    print(f"{GLYPH_DONE} {blue('installed as a background service (systemd --user)', bold=True)} — starts at login, restarts if it crashes.")
+    print(comment(f"logs: journalctl --user -u {SYSTEMD_UNIT} -f"))
+    print(comment("if this is a server, also run `loginctl enable-linger $USER` so it keeps running after you log out."))
+    print(comment(f"to stop: python3 {os.path.abspath(__file__)} --remove-permanent --no-update"))
 
 
 def remove_linux_service() -> None:
@@ -575,7 +616,7 @@ def remove_linux_service() -> None:
     if unit_path.exists():
         unit_path.unlink()
     subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True)
-    print(style("Removed the background service.", "green"))
+    print(f"{GLYPH_DONE} removed the background service.")
 
 
 def install_windows_service(argv: list[str]) -> None:
@@ -585,14 +626,15 @@ def install_windows_service(argv: list[str]) -> None:
         "/tn", SCHTASKS_NAME, "/tr", cmd_str,
     ], check=True)
     subprocess.run(["schtasks", "/run", "/tn", SCHTASKS_NAME], check=True)
-    print(style("Installed as a scheduled task — it will start at login. (Windows Task Scheduler doesn't auto-restart on crash like launchd/systemd do.)", "green", "bold"))
-    print(dim(f"To stop: python3 {os.path.abspath(__file__)} --remove-permanent --no-update"))
+    print(f"{GLYPH_DONE} {blue('installed as a scheduled task', bold=True)} — starts at login.")
+    print(comment("Windows Task Scheduler doesn't auto-restart on crash like launchd/systemd do."))
+    print(comment(f"to stop: python3 {os.path.abspath(__file__)} --remove-permanent --no-update"))
 
 
 def remove_windows_service() -> None:
     subprocess.run(["schtasks", "/end", "/tn", SCHTASKS_NAME], capture_output=True)
     subprocess.run(["schtasks", "/delete", "/f", "/tn", SCHTASKS_NAME], capture_output=True)
-    print(style("Removed the scheduled task.", "green"))
+    print(f"{GLYPH_DONE} removed the scheduled task.")
 
 
 def install_permanent(args: argparse.Namespace) -> None:
@@ -642,10 +684,10 @@ def main() -> None:
     if not args.no_update:
         remote = fetch_update()
         if remote:
-            print(style("Updating to the latest version...", "yellow"))
+            print(f"{GLYPH_WORK} {dim('updating to the latest version...')}")
             apply_update_and_restart(remote)
 
-    print(style(BANNER, "white", "bold"))
+    print(paper(BANNER, bold=True))
 
     if args.remove_permanent:
         remove_permanent()
@@ -679,9 +721,9 @@ def main() -> None:
     ensure_ollama_running()
     ensure_model(ollama_tag)
 
-    print(style("Opening a Cloudflare quick tunnel to your local Ollama...", "cyan"))
+    working("opening a Cloudflare quick tunnel to your local Ollama...")
     tunnel_proc, tunnel_url = start_tunnel()
-    print(style(f"Tunnel live at {tunnel_url}", "green"))
+    print(f"{GLYPH_DONE} tunnel live at {blue(tunnel_url)}")
 
     capability_text = args.capability or capability_text_default or (
         f"{ollama_tag} running locally via Ollama, contributed by {args.operator}. Free, community-hosted."
@@ -699,7 +741,7 @@ def main() -> None:
         "catalogue_id": catalogue_id,
     }
 
-    print(style(f"Registering '{args.name}' with {gateway}...", "cyan"))
+    working(f"registering '{args.name}' with {gateway}...")
     try:
         node = http_json("POST", f"{gateway}/nodes", body=payload, headers={"X-Common-Secret": args.secret})
     except urllib.error.HTTPError as e:
@@ -707,8 +749,8 @@ def main() -> None:
         die(f"registration failed: {e.code} {e.read().decode()}")
 
     node_id = node["id"]
-    print(style(f"● You're live! Node id: {node_id}", "green", "bold"))
-    print(dim("Keep this window open to stay in the network. Press Ctrl+C to leave."))
+    print(f"{GLYPH_DONE} {blue('you are live', bold=True)} · node id: {node_id}")
+    print(comment("keep this window open to stay in the network — ctrl+c to leave."))
 
     write_identity(gateway, args.name, node_id, catalogue_id, domain_tags)
 
@@ -722,7 +764,7 @@ def main() -> None:
         tunnel_proc.terminate()
 
     def cleanup(signum=None, frame=None):
-        print(style("\nLeaving the network...", "yellow"))
+        print(f"\n{GLYPH_WORK} {dim('leaving the network...')}")
         deregister_and_stop_tunnel()
         sys.exit(0)
 
@@ -733,29 +775,29 @@ def main() -> None:
     last_tunnel_check = time.monotonic()
     while True:
         if tunnel_proc.poll() is not None:
-            print(style("Tunnel dropped unexpectedly.", "red"))
+            print(f"{GLYPH_FORMING} {red('tunnel dropped unexpectedly.')}")
             cleanup()
 
         if time.monotonic() - last_tunnel_check > TUNNEL_HEALTH_CHECK_INTERVAL_SECONDS:
             last_tunnel_check = time.monotonic()
             if not tunnel_is_healthy(tunnel_url):
-                print(style("Tunnel URL is no longer reachable (quick tunnels can silently rotate hostnames) — restarting it...", "yellow"))
+                print(f"{GLYPH_FORMING} {red('tunnel is no longer reachable')} (quick tunnels can silently rotate hostnames) — restarting it...")
                 tunnel_proc.terminate()
                 tunnel_proc, tunnel_url = start_tunnel()
-                print(style(f"Tunnel live at {tunnel_url}", "green"))
+                print(f"{GLYPH_DONE} tunnel live at {blue(tunnel_url)}")
                 payload["endpoint_url"] = f"{tunnel_url}/v1"
                 try:
                     node = http_json("POST", f"{gateway}/nodes", body=payload, headers={"X-Common-Secret": args.secret})
                     node_id = node["id"]
-                    print(style(f"Re-registered '{args.name}' with the new tunnel URL.", "green"))
+                    print(f"{GLYPH_DONE} re-registered '{args.name}' with the new tunnel url.")
                 except urllib.error.HTTPError as e:
-                    print(style(f"warning: failed to re-register after tunnel restart: {e.code} {e.read().decode()}", "red"), file=sys.stderr)
+                    print(f"{GLYPH_FAILED} {red(f'failed to re-register after tunnel restart: {e.code} {e.read().decode()}')}", file=sys.stderr)
 
         if not args.no_update and time.monotonic() - last_update_check > UPDATE_CHECK_INTERVAL_SECONDS:
             last_update_check = time.monotonic()
             remote = fetch_update()
             if remote:
-                print(style("\nA new version is available — restarting to update...", "yellow"))
+                print(f"\n{GLYPH_WORK} {dim('a new version is available — restarting to update...')}")
                 deregister_and_stop_tunnel()
                 apply_update_and_restart(remote)
 
