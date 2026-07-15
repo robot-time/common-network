@@ -387,8 +387,17 @@ def resolve_model(gateway: str, args: argparse.Namespace) -> tuple[str, list[str
             f"API-hosted specialist ({assignment['source']}), not something common-join can pull and run locally.",
             "yellow",
         ))
-        print(dim("See other options with --list-catalogue, or pick one directly with --model <id>."))
-        sys.exit(0)
+        fallback = _best_local_fallback(gateway, hw, exclude_id=assignment["catalogue_id"])
+        if not fallback:
+            print(dim("No locally-runnable catalogue model fits this machine either."))
+            print(dim("See --list-catalogue, or pick one directly with --model <id>."))
+            sys.exit(0)
+        print(style(f"→ Next best you can run locally: {fallback['display_name']}", "blue", "bold"))
+        if not args.auto:
+            if not prompt_yes_no(f"Provision {fallback['display_name']} instead?"):
+                print(dim("No changes made. Use --model <id> to pick manually, or --list-catalogue to see options."))
+                sys.exit(0)
+        return source_to_ollama_tag(fallback["source"]), fallback["domain_tags"], fallback["id"], fallback["capability_text"]
 
     if not args.auto:
         if not prompt_yes_no(f"Provision {assignment['display_name']} on this machine?"):
@@ -396,6 +405,26 @@ def resolve_model(gateway: str, args: argparse.Namespace) -> tuple[str, list[str
             sys.exit(0)
 
     return ollama_tag, assignment["domain_tags"], assignment["catalogue_id"], assignment["capability_text"]
+
+
+def _best_local_fallback(gateway: str, hw: dict, exclude_id: str | None) -> dict | None:
+    """Best Ollama-runnable catalogue entry this hardware can fit, for when
+    /assign's top pick is an API-hosted specialist common-join can't
+    provision. Prefers verified-in-lane, then the smallest model (safest
+    fit under headroom)."""
+    catalogue = fetch_catalogue(gateway)
+    headroom_ram = hw["available_ram_gb"] * 0.8
+    candidates = [
+        m for m in catalogue
+        if m["id"] != exclude_id
+        and source_to_ollama_tag(m["source"])
+        and m["min_ram_gb"] <= headroom_ram
+        and (not m["needs_gpu"] or hw["gpu_present"])
+    ]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda m: (not m["verified_in_lane"], m["params_b"] or 0))
+    return candidates[0]
 
 
 TUNNEL_HEALTH_CHECK_INTERVAL_SECONDS = 120  # quick tunnels can silently reconnect with a new hostname without the process dying
