@@ -5,7 +5,6 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     database_url: str = "postgresql://localhost/common_network"
-    registry_secret: str = "change-me-dev-secret"
 
     embed_model_name: str = "BAAI/bge-small-en-v1.5"
     embed_dim: int = 384

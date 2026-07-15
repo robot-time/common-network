@@ -1,17 +1,12 @@
+import secrets
 from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException
 
 from app import db, embedder
-from app.config import settings
-from app.models import NodeCreate, NodeOut
+from app.models import NodeCreate, NodeOut, NodeRegisterOut
 
 router = APIRouter()
-
-
-def _require_secret(x_common_secret: str | None) -> None:
-    if x_common_secret != settings.registry_secret:
-        raise HTTPException(status_code=401, detail="invalid or missing X-Common-Secret")
 
 
 def _row_to_node_out(row) -> NodeOut:
@@ -32,18 +27,22 @@ def _row_to_node_out(row) -> NodeOut:
     )
 
 
-@router.post("/nodes", response_model=NodeOut)
-async def register_node(node: NodeCreate, x_common_secret: str | None = Header(default=None)):
-    _require_secret(x_common_secret)
+@router.post("/nodes", response_model=NodeRegisterOut)
+async def register_node(node: NodeCreate):
+    # Permissionless by design -- see README "Scope": anyone can contribute a
+    # node, no shared password. The one credential issued here is scoped to
+    # *this* node only (below), so joining is frictionless but a node can
+    # still only be deregistered by whoever holds its own token.
     vec = embedder.embed(node.capability_text)
+    new_token = secrets.token_urlsafe(24)
     async with db.pool().acquire() as conn:
         row = await conn.fetchrow(
             """
             insert into nodes
                 (name, operator, endpoint_url, model_name, api_key_ref,
                  capability_text, capability_embed, region, cost_per_1k,
-                 domain_tags, catalogue_id)
-            values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                 domain_tags, catalogue_id, node_token)
+            values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             on conflict (name) do update set
                 operator = excluded.operator,
                 endpoint_url = excluded.endpoint_url,
@@ -59,9 +58,12 @@ async def register_node(node: NodeCreate, x_common_secret: str | None = Header(d
             """,
             node.name, node.operator, node.endpoint_url, node.model_name, node.api_key_ref,
             node.capability_text, vec, node.region, node.cost_per_1k,
-            node.domain_tags, node.catalogue_id,
+            node.domain_tags, node.catalogue_id, new_token,
         )
-    return _row_to_node_out(row)
+    out = _row_to_node_out(row)
+    # A re-registration (same name, e.g. after a tunnel restart) keeps the
+    # row's original token rather than the fresh one generated above.
+    return NodeRegisterOut(**out.model_dump(), node_token=row["node_token"])
 
 
 @router.get("/nodes", response_model=list[NodeOut])
@@ -72,10 +74,11 @@ async def list_nodes():
 
 
 @router.delete("/nodes/{node_id}")
-async def delete_node(node_id: UUID, x_common_secret: str | None = Header(default=None)):
-    _require_secret(x_common_secret)
+async def delete_node(node_id: UUID, x_common_node_token: str | None = Header(default=None)):
     async with db.pool().acquire() as conn:
-        result = await conn.execute("delete from nodes where id = $1", node_id)
+        result = await conn.execute(
+            "delete from nodes where id = $1 and node_token = $2", node_id, x_common_node_token,
+        )
     if result == "DELETE 0":
-        raise HTTPException(status_code=404, detail="node not found")
+        raise HTTPException(status_code=404, detail="node not found, or X-Common-Node-Token doesn't match")
     return {"deleted": str(node_id)}

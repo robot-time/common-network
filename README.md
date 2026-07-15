@@ -54,7 +54,7 @@ createdb common_network
 psql -d common_network -c "create extension if not exists vector;"
 psql -d common_network -f migrations/001_init.sql
 
-cp .env.example .env                 # edit DATABASE_URL / REGISTRY_SECRET / OPENROUTER_API_KEY
+cp .env.example .env                 # edit DATABASE_URL / OPENROUTER_API_KEY
 
 .venv/bin/uvicorn app.main:app --reload
 ```
@@ -86,9 +86,10 @@ routing distribution, and recent decisions (auto-refreshes every 5s):
 
 ## Registering a node
 
+Registration is permissionless — no shared password, anyone can add a node:
+
 ```bash
 curl -X POST http://localhost:8000/nodes \
-  -H "X-Common-Secret: $REGISTRY_SECRET" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "my-qwen-node",
@@ -101,8 +102,11 @@ curl -X POST http://localhost:8000/nodes \
   }'
 ```
 
-`X-Common-Secret` is a shared secret (`REGISTRY_SECRET` in `.env`) — this is
-explicitly **not** production-grade auth, just enough friction for v0.1.
+The response includes a one-time `node_token` — keep it, it's the only way
+to deregister *this* node later (`DELETE /nodes/{id}` with
+`X-Common-Node-Token: <token>`). `common-join` and `common join` handle this
+for you automatically; it's only relevant if you're registering directly
+against the API.
 
 ## Contributing a node (for friends)
 
@@ -116,8 +120,7 @@ common-join
 
 (Windows: `irm https://raw.githubusercontent.com/robot-time/common-network/main/install.ps1 | iex`)
 
-`common-join` will ask for the network secret — ask whoever runs the
-network for it, it's deliberately not committed here. It then opens a free
+No password needed — joining is permissionless. `common-join` opens a free
 Cloudflare tunnel to your local Ollama, registers it with the shared
 gateway, and keeps it online until you press `Ctrl+C`.
 
@@ -131,8 +134,8 @@ The live gateway for this network is:
    `CREATE EXTENSION vector;` via the Railway Postgres query console, or via
    `psql $DATABASE_URL -c "create extension vector;"`).
 2. Deploy `gateway/` with the included `Dockerfile`.
-3. Set `DATABASE_URL`, `REGISTRY_SECRET`, and any `*_API_KEY` env vars
-   referenced by your nodes' `api_key_ref`.
+3. Set `DATABASE_URL` and any `*_API_KEY` env vars referenced by your
+   nodes' `api_key_ref`.
 4. Run the migration once against the Railway database:
    `DATABASE_URL=<railway-url> python -m app.migrate`
 5. The gateway seeds `nodes.seed.yaml` on first boot (`SEED_ON_STARTUP=true`

@@ -35,6 +35,13 @@ class NodeOut(BaseModel):
     catalogue_id: str | None = None
 
 
+class NodeRegisterOut(NodeOut):
+    # Only ever returned once, from POST /nodes -- the one credential needed
+    # to deregister this specific node. Never included in GET /nodes (that
+    # would let anyone deregister anyone).
+    node_token: str
+
+
 # --- Decisions ---
 
 class DecisionOut(BaseModel):

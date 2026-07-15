@@ -477,7 +477,7 @@ def cmd_config(as_json: bool, args: argparse.Namespace) -> None:
     print(comment("what's needed to route your request and log that decision."))
 
 
-def cmd_leave(gateway: str, secret: str | None) -> None:
+def cmd_leave(gateway: str) -> None:
     identity = read_identity()
     join_py = INSTALL_DIR / "join.py"
     if join_py.exists():
@@ -495,7 +495,7 @@ def cmd_leave(gateway: str, secret: str | None) -> None:
         print(dim("not currently on the commons."))
 
 
-def cmd_join_or_serve(verb: str, gateway: str, secret: str | None, args: argparse.Namespace, extra_model: str | None = None) -> None:
+def cmd_join_or_serve(verb: str, gateway: str, args: argparse.Namespace, extra_model: str | None = None) -> None:
     join_py = INSTALL_DIR / "join.py"
     # Always fetch the current version before delegating -- a stale local
     # copy's own self-update runs *after* argparse, so a new flag this CLI
@@ -516,8 +516,6 @@ def cmd_join_or_serve(verb: str, gateway: str, secret: str | None, args: argpars
         print(dim(f"putting {extra_model} out to graze on the commons.\n"))
 
     argv = [sys.executable, str(join_py), "--gateway", gateway]
-    if secret:
-        argv += ["--secret", secret]
     if extra_model:
         argv += ["--model", extra_model, "--auto"]
     elif args.auto:
@@ -627,7 +625,6 @@ def main() -> None:
     parser.add_argument("verb", nargs="?", default=None)
     parser.add_argument("rest", nargs=argparse.REMAINDER)
     parser.add_argument("--gateway", default=os.environ.get("COMMON_GATEWAY_URL", DEFAULT_GATEWAY))
-    parser.add_argument("--secret", default=os.environ.get("COMMON_REGISTRY_SECRET"))
     parser.add_argument("--region", default=None)
     parser.add_argument("--model", default=None)
     parser.add_argument("--auto", action="store_true")
@@ -679,15 +676,15 @@ def main() -> None:
     elif args.verb == "config":
         cmd_config(args.json, args)
     elif args.verb == "join":
-        cmd_join_or_serve("join", gateway, args.secret, args)
+        cmd_join_or_serve("join", gateway, args)
     elif args.verb == "serve":
         model = args.rest[0] if args.rest else args.model
         if not model:
             print(red("✗ serve needs a model: common serve <model>"), file=sys.stderr)
             sys.exit(1)
-        cmd_join_or_serve("serve", gateway, args.secret, args, extra_model=model)
+        cmd_join_or_serve("serve", gateway, args, extra_model=model)
     elif args.verb == "leave":
-        cmd_leave(gateway, args.secret)
+        cmd_leave(gateway)
     elif args.verb in ("synth", "map"):
         cmd_help(args.verb)
     else:

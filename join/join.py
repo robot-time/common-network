@@ -10,15 +10,20 @@ Requires: Python 3.8+, Ollama (https://ollama.com/download), cloudflared
 (https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/).
 
 Usage:
-    python3 join.py --secret SHARED_SECRET
-    python3 join.py --secret SHARED_SECRET --permanent   # run as a background service
+    python3 join.py
+    python3 join.py --permanent   # run as a background service
     python3 join.py --remove-permanent                   # undo the above
 
+Joining is permissionless -- no shared password needed, anyone can
+contribute a node (see README "Scope"). The gateway hands back a
+per-node token on registration, used only to deregister that node later;
+it's held in memory for the life of this process, never typed by you.
+
 Joins the default shared Common Network gateway unless --gateway overrides
-it. If --secret is omitted you'll be prompted for it. It checks GitHub for
-a newer version of itself on startup, and again every 30 minutes while
-running — if one is found it deregisters, stops the tunnel, updates, and
-restarts cleanly (pass --no-update to disable both checks).
+it. It checks GitHub for a newer version of itself on startup, and again
+every 30 minutes while running — if one is found it deregisters, stops
+the tunnel, updates, and restarts cleanly (pass --no-update to disable
+both checks).
 
 --permanent installs this as a real background service (LaunchAgent on
 macOS, systemd --user on Linux, a Scheduled Task on Windows) that starts
@@ -27,7 +32,6 @@ computers you don't want to babysit with an open terminal. Everything
 else has a sensible default — see --help.
 """
 import argparse
-import getpass
 import json
 import os
 import platform
@@ -522,7 +526,6 @@ def _service_argv(args: argparse.Namespace) -> list[str]:
     argv = [
         sys.executable, os.path.abspath(__file__),
         "--gateway", args.gateway,
-        "--secret", args.secret,
         "--model", args.model,
         "--name", args.name,
         "--operator", args.operator,
@@ -667,7 +670,6 @@ def main() -> None:
     _enable_windows_ansi()
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--gateway", default=os.environ.get("COMMON_GATEWAY_URL", DEFAULT_GATEWAY), help="Gateway base URL (default: the shared Common Network gateway)")
-    parser.add_argument("--secret", default=os.environ.get("COMMON_REGISTRY_SECRET"), help="Shared registry secret (will prompt if not given)")
     parser.add_argument("--model", default=None, help="Catalogue id (e.g. qwen2.5-coder-7b) or raw Ollama model tag. Default: probe hardware and ask the network what it needs most (see --auto, --list-catalogue)")
     parser.add_argument("--auto", action="store_true", help="Accept the network's recommended model automatically, no confirmation prompt")
     parser.add_argument("--list-catalogue", action="store_true", help="List catalogue models this machine can run, then exit")
@@ -699,12 +701,6 @@ def main() -> None:
         hw = probe_hardware()
         print_catalogue(gateway, hw)
         return
-
-    if not args.secret:
-        if sys.stdin.isatty():
-            args.secret = getpass.getpass("Enter the network secret you were given: ").strip()
-        if not args.secret:
-            die("--secret is required (or set COMMON_REGISTRY_SECRET)")
 
     ollama_tag, domain_tags, catalogue_id, capability_text_default = resolve_model(gateway, args)
     # Bake the resolution into args.model so --permanent's saved service
@@ -743,12 +739,13 @@ def main() -> None:
 
     working(f"registering '{args.name}' with {gateway}...")
     try:
-        node = http_json("POST", f"{gateway}/nodes", body=payload, headers={"X-Common-Secret": args.secret})
+        node = http_json("POST", f"{gateway}/nodes", body=payload)
     except urllib.error.HTTPError as e:
         tunnel_proc.terminate()
         die(f"registration failed: {e.code} {e.read().decode()}")
 
     node_id = node["id"]
+    node_token = node["node_token"]
     print(f"{GLYPH_DONE} {blue('you are live', bold=True)} · node id: {node_id}")
     print(comment("keep this window open to stay in the network — ctrl+c to leave."))
 
@@ -756,7 +753,9 @@ def main() -> None:
 
     def deregister_and_stop_tunnel():
         try:
-            req = urllib.request.Request(f"{gateway}/nodes/{node_id}", method="DELETE", headers={"X-Common-Secret": args.secret})
+            req = urllib.request.Request(
+                f"{gateway}/nodes/{node_id}", method="DELETE", headers={"X-Common-Node-Token": node_token},
+            )
             urllib.request.urlopen(req, timeout=5)
         except urllib.error.URLError:
             pass
@@ -787,8 +786,9 @@ def main() -> None:
                 print(f"{GLYPH_DONE} tunnel live at {blue(tunnel_url)}")
                 payload["endpoint_url"] = f"{tunnel_url}/v1"
                 try:
-                    node = http_json("POST", f"{gateway}/nodes", body=payload, headers={"X-Common-Secret": args.secret})
+                    node = http_json("POST", f"{gateway}/nodes", body=payload)
                     node_id = node["id"]
+                    node_token = node["node_token"]
                     print(f"{GLYPH_DONE} re-registered '{args.name}' with the new tunnel url.")
                 except urllib.error.HTTPError as e:
                     print(f"{GLYPH_FAILED} {red(f'failed to re-register after tunnel restart: {e.code} {e.read().decode()}')}", file=sys.stderr)

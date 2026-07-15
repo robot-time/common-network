@@ -28,8 +28,8 @@ checks for it and tells you if it's missing.
 common-join
 ```
 
-It'll ask for the network secret (get that from whoever's running the
-network — it's not public). Then it will:
+No password needed — joining is permissionless, anyone can contribute a
+node. It will:
 
 1. Check GitHub for a newer version of itself and update in place if found
    (pass `--no-update` to skip).
@@ -85,7 +85,7 @@ If you'd rather not run the installer, you only need Python 3.8+,
 on your PATH, then run the script directly:
 
 ```bash
-python3 join.py --secret THE_SHARED_SECRET
+python3 join.py
 ```
 
 ## Notes
