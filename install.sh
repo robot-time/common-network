@@ -41,6 +41,19 @@ exec python3 "$INSTALL_DIR/chat.py" "\$@"
 WRAPPER
 chmod +x "$BIN_DIR/common-chat"
 
+# --- common (the unified CLI: ask/join/serve/leave/status/demand/peers/...) ---
+echo "Downloading the common CLI..."
+curl -fsSL "$RAW/common/common.py" -o "$INSTALL_DIR/common.py"
+chmod +x "$INSTALL_DIR/common.py"
+
+cat > "$BIN_DIR/common" <<WRAPPER
+#!/usr/bin/env bash
+export PATH="$BIN_DIR:\$PATH"
+exec python3 "$INSTALL_DIR/common.py" "\$@"
+WRAPPER
+chmod +x "$BIN_DIR/common"
+ln -sf "$BIN_DIR/common" "$BIN_DIR/cmn"
+
 # --- common-join (only if Ollama is present) ---
 JOIN_INSTALLED=0
 if command -v ollama >/dev/null 2>&1; then
@@ -107,10 +120,13 @@ fi
 echo ""
 echo "Done! Try:"
 echo ""
-echo "    common-chat \"hello!\""
+echo "    common ask \"hello!\""
+echo "    common               # interactive session"
 if [ "$JOIN_INSTALLED" = "1" ]; then
-  echo "    common-join          # contribute a node"
+  echo "    common join          # contribute a node"
 fi
+echo ""
+echo "(common-chat / common-join still work directly too, if you're used to them)"
 echo ""
 if [ "${ADDED_TO_RC:-0}" = "1" ]; then
   echo "(Restart your terminal first, or run: export PATH=\"$BIN_DIR:\$PATH\")"

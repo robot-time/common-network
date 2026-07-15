@@ -34,6 +34,18 @@ python "$InstallDir\chat.py" %*
 "@
 Set-Content -Path "$BinDir\common-chat.cmd" -Value $chatWrapper
 
+# --- common (the unified CLI: ask/join/serve/leave/status/demand/peers/...) ---
+Write-Host "Downloading the common CLI..."
+Invoke-WebRequest -Uri "$Raw/common/common.py" -OutFile "$InstallDir\common.py"
+
+$commonWrapper = @"
+@echo off
+set PATH=$BinDir;%PATH%
+python "$InstallDir\common.py" %*
+"@
+Set-Content -Path "$BinDir\common.cmd" -Value $commonWrapper
+Set-Content -Path "$BinDir\cmn.cmd" -Value $commonWrapper
+
 # --- common-join (only if Ollama is present) ---
 $joinInstalled = $false
 $ollama = Get-Command ollama -ErrorAction SilentlyContinue
@@ -72,8 +84,9 @@ if ($userPath -notlike "*$BinDir*") {
 Write-Host ""
 Write-Host "Done! Open a new terminal, then try:"
 Write-Host ""
-Write-Host "    common-chat `"hello!`""
+Write-Host "    common ask `"hello!`""
+Write-Host "    common               # interactive session"
 if ($joinInstalled) {
-    Write-Host "    common-join          # contribute a node"
+    Write-Host "    common join          # contribute a node"
 }
 Write-Host ""

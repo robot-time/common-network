@@ -106,6 +106,32 @@ def die(msg: str, code: int = 1) -> None:
     sys.exit(code)
 
 
+IDENTITY_PATH = Path.home() / ".common-network" / "identity.json"
+
+
+def write_identity(gateway: str, name: str, node_id: str, catalogue_id: str | None, domain_tags: list[str] | None) -> None:
+    """Local record of the most recent node this machine registered -- read by
+    `common status` / `common whoami` / `common contrib`. Not a cryptographic
+    identity (see COMMON. CLI design doc's local-keypair vision) -- just a
+    name, deliberately simple until that's a considered decision, not a guess."""
+    try:
+        IDENTITY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        IDENTITY_PATH.write_text(json.dumps({
+            "gateway": gateway, "name": name, "node_id": node_id,
+            "catalogue_id": catalogue_id, "domain_tags": domain_tags,
+            "joined_at": time.time(),
+        }))
+    except OSError:
+        pass  # best-effort -- never block joining the network over this
+
+
+def clear_identity() -> None:
+    try:
+        IDENTITY_PATH.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def http_json(method: str, url: str, body: dict | None = None, headers: dict | None = None, timeout: float = 10.0):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
@@ -655,12 +681,15 @@ def main() -> None:
     print(style(f"● You're live! Node id: {node_id}", "green", "bold"))
     print(dim("Keep this window open to stay in the network. Press Ctrl+C to leave."))
 
+    write_identity(gateway, args.name, node_id, catalogue_id, domain_tags)
+
     def deregister_and_stop_tunnel():
         try:
             req = urllib.request.Request(f"{gateway}/nodes/{node_id}", method="DELETE", headers={"X-Common-Secret": args.secret})
             urllib.request.urlopen(req, timeout=5)
         except urllib.error.URLError:
             pass
+        clear_identity()
         tunnel_proc.terminate()
 
     def cleanup(signum=None, frame=None):
